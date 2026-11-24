@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 4,
+  "sessions": [
+    { "id": "s1", "date": "2026-11-24", "startedAt": 1795000000000, "endedAt": 1795003600000, "notes": "",
+      "entries": [
+        { "exerciseId": "press-pecho-maquina", "notes": "", "ss": "ss-1", "sets": [ { "kg": 40, "reps": 10 } ], "blocks": [] },
+        { "exerciseId": "jalon-pecho", "notes": "", "ss": "ss-1", "sets": [ { "kg": 45, "reps": 10 } ], "blocks": [] }
+      ] }
+  ],
+  "routines": [],
+  "pains": [
+    { "id": "pain-1", "area": "shoulders", "note": "Al subir el brazo", "date": "2026-11-20", "resolved": false },
+    { "id": "pain-2", "area": "lower_back", "note": "", "date": "2026-10-01", "resolved": true, "resolvedDate": "2026-10-10" }
+  ],
+  "customExercises": [],
+  "exerciseSettings": { "press-pecho-maquina": { "rest": 45 } },
+  "bodyweight": [],
+  "settings": { "theme": "system", "targetPerWeek": 2, "restSeconds": 90, "backupReminderDays": 14, "sound": true, "cardioTargetMin": 150, "keepAwake": true, "goal": "strength" },
+  "meta": {}
+}

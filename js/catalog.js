@@ -1,6 +1,8 @@
 // Catálogo de músculos y ejercicios con nombres comunes en castellano. Datos estáticos (no se guardan en el documento):
 // el usuario solo guarda sus ajustes por ejercicio (apodo, salto de kg, rango de reps, foto) y sus ejercicios propios.
 
+import { DEFAULT_GOAL, repRangeFor } from './goals.js';
+
 export const MUSCLES = {
   chest: { name: 'Pecho', hint: 'pectoral', group: 'Tren superior' },
   shoulders: { name: 'Hombros', hint: 'deltoides', group: 'Tren superior' },
@@ -146,6 +148,7 @@ export const STEP_OPTIONS = [0, 0.5, 1, 1.25, 2, 2.5, 4, 5, 10];
 /** Une catálogo + ejercicios propios + ajustes del usuario (apodo, salto, reps, foto). */
 export function resolveExercises(doc) {
   const overrides = doc.exerciseSettings ?? {};
+  const goal = doc.settings?.goal ?? DEFAULT_GOAL;
   const all = [...CATALOG, ...(doc.customExercises ?? []).map((e) => ({ ...e, custom: true }))];
   return all.map((e) => {
     const o = overrides[e.id] ?? {};
@@ -153,7 +156,8 @@ export function resolveExercises(doc) {
       ...e,
       nickname: o.nickname ?? '',
       step: o.step ?? e.step,
-      reps: o.reps ?? e.reps,
+      reps: o.reps ?? repRangeFor(e, goal),
+      rest: o.rest ?? null,
       hasPhoto: Boolean(o.photo),
       notes: o.notes ?? '',
       hidden: Boolean(o.hidden),

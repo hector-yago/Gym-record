@@ -15,6 +15,12 @@ Estado: implementados salvo la prueba manual en iPhone real. Referencias a prueb
 | R10 | Cardio (cinta, elíptica, bici, spinning, remo, escaladora, comba, andar, natación, HIIT): bloques con minutos, distancia, nivel, inclinación, pulsaciones y esfuerzo dentro del mismo entreno; estadísticas (min/semana, progreso, velocidad media) y consejos (progresión, frecuencia, equilibrio con la fuerza). | tests `cardio`, e2e |
 | R11 | Rutinas guardables con rotación («Toca: Día A»), crear/editar/borrar, guardar o actualizar desde una sesión. | tests `routines`, e2e |
 | R12 | Pantalla encendida durante la sesión (configurable), series de aproximación sugeridas, consejo de semana de descarga y sustitución de ejercicios. | tests `routines` (wake lock), `recommend`, e2e |
+| R13 | Superseries (descanso al cerrar la ronda), descanso por ejercicio y cuenta atrás en ejercicios por tiempo. | tests `insights` (restFor), e2e |
+| R14 | Lista de récords (fuerza y cardio) y récords del mes. | tests `insights`, e2e |
+| R15 | Calendario de constancia, aviso tras ≥ 10 días sin entrenar y volumen por músculo (semana vs media 4 semanas, «se queda corto»). | tests `insights`, e2e |
+| R16 | Informe mensual (HTML autónomo, compartir/imprimir) y comparación de dos sesiones. | tests `insights`, e2e |
+| R17 | Molestias por zona (avisos, sin subir peso, consejo general; sin pretensión médica). | tests `insights`, e2e |
+| R18 | Objetivo configurable (fuerza/hipertrofia/mantenimiento): rangos, descansos y prudencia de los consejos. | tests `insights`, e2e |
 | R9 | Funciona sin conexión; instalable en iPhone; tema claro/oscuro; objetivo de sesiones/semana configurable. | e2e (SW), manual |
 
 ## Ambigüedades resueltas con valor por defecto

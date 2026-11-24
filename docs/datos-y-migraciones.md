@@ -16,22 +16,25 @@ Los datos no se pierden al actualizar la app. Mecanismo (igual que `task-reminde
 
 - **3** (0.3.0, rutinas): se añade `routines` (vacío), las sesiones pueden llevar `routineId` y los ajustes `keepAwake` (true). Migración 2→3 trivial; fixture `tests/fixtures/v3.json`.
 
-## Forma del documento (esquema 3)
+- **4** (0.4.0): se añaden `pains` (vacío), `settings.goal` (hipertrofia), y opcionales `ss` en las entradas y `rest` en `exerciseSettings`. Migración 3→4 trivial; fixture `tests/fixtures/v4.json`.
+
+## Forma del documento (esquema 4)
 ```
 { schemaVersion, routines:[{ id, name, exerciseIds[], createdAt }],
+  pains:[{ id, area, note, date, resolved, resolvedDate? }],
   sessions:[{ id, date, startedAt, endedAt|null, notes, routineId?,
-    entries:[{ exerciseId, notes, sets:[{ kg, reps, rpe?:1|2|3, warmup?:true }],
+    entries:[{ exerciseId, notes, ss?, sets:[{ kg, reps, rpe?:1|2|3, warmup?:true }],
       blocks:[{ min, km?, level?, incline?, bpm?, rpe?:1|2|3 }] }] }],
   customExercises:[{ id, name, alt, primary, secondary[], equipment, step, reps:[min,max], how }],
-  exerciseSettings:{ [exerciseId]:{ nickname?, step?, reps?, notes?, photo?, hidden? } },
+  exerciseSettings:{ [exerciseId]:{ nickname?, step?, reps?, rest?, notes?, photo?, hidden? } },
   bodyweight:[{ date, kg }],
-  settings:{ theme, targetPerWeek, restSeconds, backupReminderDays, sound, cardioTargetMin, keepAwake },
+  settings:{ theme, targetPerWeek, restSeconds, backupReminderDays, sound, cardioTargetMin, keepAwake, goal },
   meta:{ lastExport?, lastAutoBackup? } }
 ```
 Los ids del catálogo (`js/catalog.js`) son **estables**: no se renombran ni reutilizan, porque las sesiones los referencian. Si un ejercicio desaparece del catálogo, se muestra como «Ejercicio desconocido» y se conservan sus series. Las fotos viven en la clave `photo:<exerciseId>` (data URL JPEG).
 
 ## Cómo cambiar el esquema
 1. Subir `CURRENT_SCHEMA` y añadir `steps[N]` en `migrations.js`.
-2. Guardar el fixture de la versión anterior en `tests/fixtures/vN.json` (ya existen v1, v2 y v3).
+2. Guardar el fixture de la versión anterior en `tests/fixtures/vN.json` (ya existen v1, v2, v3 y v4).
 3. Añadir un test que lo migre a la actual comprobando que no se pierde nada (`tests/store.test.mjs`).
 4. Anotarlo aquí y subir la versión de la app.

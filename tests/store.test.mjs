@@ -136,12 +136,15 @@ test('fixture v2 (con cardio): se migra a la v3 con copia previa y conserva los 
   assert.equal(s.state.settings.cardioTargetMin, 120);
 });
 
-test('fixture v3 (con rutinas): se abre tal cual y conserva rutinas y routineId', async () => {
+test('fixture v3 (con rutinas): se migra a la v4 con copia previa y conserva rutinas y routineId', async () => {
   const v3 = fixture('v3.json');
   const adapter = memoryAdapter();
   await adapter.put('doc', v3);
   const s = createStore(adapter);
-  assert.equal((await s.load()).migratedFrom, null);
+  assert.equal((await s.load()).migratedFrom, 3);
+  assert.equal((await s.listBackups()).length, 1);
+  assert.deepEqual(s.state.pains, []);
+  assert.equal(s.state.settings.goal, 'hypertrophy');
   assert.deepEqual(s.state.routines.map((r) => r.name), ['Día A', 'Día B']);
   assert.equal(s.state.sessions[0].routineId, 'routine-a');
   assert.equal(s.state.settings.keepAwake, false);
@@ -158,4 +161,44 @@ test('importar fusionando no duplica rutinas y añade las que faltan', async () 
   await b.importJson(json, 'merge');
   assert.equal(b.state.routines.length, 2);
   assert.deepEqual(b.state.routines.find((r) => r.id === 'routine-a').exerciseIds, ['jalon-pecho'], 'lo local manda');
+});
+
+test('fixture v4 (superseries, descanso, molestias, objetivo): se abre tal cual', async () => {
+  const v4 = fixture('v4.json');
+  const adapter = memoryAdapter();
+  await adapter.put('doc', v4);
+  const s = createStore(adapter);
+  assert.equal((await s.load()).migratedFrom, null);
+  assert.deepEqual(s.state.sessions[0].entries.map((e) => e.ss), ['ss-1', 'ss-1']);
+  assert.equal(s.state.exerciseSettings['press-pecho-maquina'].rest, 45);
+  assert.equal(s.state.pains[0].area, 'shoulders');
+  assert.equal(s.state.pains[1].resolved, true);
+  assert.equal(s.state.settings.goal, 'strength');
+});
+
+test('saneado v4: goal inválido, descanso fuera de rango y molestias sin zona se descartan', () => {
+  const { doc } = migrate({
+    settings: { goal: 'otro' },
+    exerciseSettings: { x: { rest: 5 }, y: { rest: 120, nickname: 'Y' } },
+    pains: [{ id: 'p1', area: 'nada', date: '2026-11-01' }, { id: 'p2', area: 'chest', date: '2026-11-02', note: ' dolor ' }],
+    sessions: [{ id: 's', date: '2026-11-01', startedAt: 1, endedAt: 2, entries: [{ exerciseId: 'a', ss: '  ss-9 ', sets: [{ kg: 1, reps: 1 }] }] }],
+  });
+  assert.equal(doc.settings.goal, 'hypertrophy');
+  assert.equal(doc.exerciseSettings.x, undefined);
+  assert.equal(doc.exerciseSettings.y.rest, 120);
+  assert.deepEqual(doc.pains.map((p) => [p.id, p.note]), [['p2', 'dolor']]);
+  assert.equal(doc.sessions[0].entries[0].ss, 'ss-9');
+});
+
+test('importar fusionando añade molestias que faltan sin duplicar', async () => {
+  const a = createStore(memoryAdapter());
+  await a.load();
+  await a.update((d) => { Object.assign(d, migrate(fixture('v4.json')).doc); });
+  const json = await a.exportJson();
+  const b = createStore(memoryAdapter());
+  await b.load();
+  await b.update((d) => { d.pains.push({ id: 'pain-1', area: 'shoulders', note: 'local', date: '2026-11-20', resolved: false }); });
+  await b.importJson(json, 'merge');
+  assert.equal(b.state.pains.length, 2);
+  assert.equal(b.state.pains.find((p) => p.id === 'pain-1').note, 'local', 'lo local manda');
 });

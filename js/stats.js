@@ -80,3 +80,45 @@ export function totals(sessions) {
 
 /** Duración en minutos de una sesión terminada (limitada a 6 h por si se olvidó terminarla). */
 export const sessionMinutes = (s) => (s.endedAt && s.startedAt ? Math.min(360, Math.max(1, Math.round((s.endedAt - s.startedAt) / 60000))) : 0);
+
+/** Número de entrenamientos terminados por día en [from, to]. */
+export function activityByDay(sessions, from, to) {
+  const map = new Map();
+  for (const s of done(sessions)) if (s.date >= from && s.date <= to) map.set(s.date, (map.get(s.date) ?? 0) + 1);
+  return map;
+}
+
+/** Calendario de constancia: `weeks` columnas (lunes → domingo), la semana actual la última. */
+export function calendarGrid(sessions, today, weeks = 16) {
+  const start = addDays(weekStart(today), -7 * (weeks - 1));
+  const counts = activityByDay(sessions, start, today);
+  return Array.from({ length: weeks }, (_, w) => Array.from({ length: 7 }, (_, d) => {
+    const date = addDays(start, w * 7 + d);
+    return { date, count: counts.get(date) ?? 0, future: date > today };
+  }));
+}
+
+/** Días desde el último entrenamiento terminado (null si no hay ninguno). */
+export function daysSinceLast(sessions, today) {
+  const dates = done(sessions).map((s) => s.date).filter((d) => d <= today);
+  return dates.length ? diffDays(dates.sort().at(-1), today) : null;
+}
+
+export const SHORT_SETS_PER_WEEK = 6; // por debajo de esto, de forma sostenida, un músculo «se queda corto»
+const SKIP_VOLUME = new Set(['forearms']);
+
+/**
+ * Series efectivas por músculo: semana en curso frente a la media de las 4 semanas completas anteriores.
+ * `short` = media < 6 series/semana teniendo actividad real (≥ 4 sesiones en las últimas 4 semanas).
+ */
+export function muscleVolumeTable(sessions, exMap, today) {
+  const start = weekStart(today);
+  const weekSets = (k) => muscleSets(sessions, exMap, addDays(start, -7 * k), addDays(start, -7 * k + 6));
+  const current = weekSets(0);
+  const prev = [1, 2, 3, 4].map(weekSets);
+  const active = done(sessions).filter((s) => s.date >= addDays(start, -28) && s.date < start).length >= 4;
+  return MUSCLE_IDS.filter((m) => !SKIP_VOLUME.has(m)).map((m) => {
+    const avgPrev = prev.reduce((a, w) => a + w[m].effective, 0) / 4;
+    return { muscle: m, current: current[m].effective, avgPrev, delta: current[m].effective - avgPrev, short: active && avgPrev < SHORT_SETS_PER_WEEK };
+  }).sort((a, b) => b.current - a.current || b.avgPrev - a.avgPrev);
+}

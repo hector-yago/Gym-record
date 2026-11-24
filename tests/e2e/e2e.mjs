@@ -205,6 +205,93 @@ try {
   assert.match(await text(), /Toca: Día B/);
   await shot('05d-rotacion');
 
+  // Superserie curl + extensión de tríceps: el descanso solo llega al cerrar la ronda
+  await click('[data-action=start]');
+  await sleep(200);
+  for (const [q, id] of [['curl', 'curl-biceps-mancuernas'], ['extension de', 'extension-triceps-polea']]) {
+    await click('[data-action=add-exercise]');
+    await sleep(100);
+    await setVal('#ae-q', q);
+    await sleep(100);
+    await click(`[data-pick=${id}]`);
+    await sleep(200);
+  }
+  await click('[data-action=entry-menu][data-ex="curl-biceps-mancuernas"]');
+  await sleep(100);
+  await click('[data-act=ss]');
+  await sleep(250);
+  assert.match(await text(), /Superserie/);
+  await click('[data-ex="curl-biceps-mancuernas"][data-action=register]');
+  await sleep(250);
+  assert.equal(await evaluate(`!!document.querySelector('#timer-root')`), false, 'en una superserie no se descansa a mitad de ronda');
+  assert.match(await text(), /te toca/);
+  await shot('05e-superserie');
+  await click('[data-ex="extension-triceps-polea"][data-action=register]');
+  await sleep(250);
+  assert.equal(await evaluate(`!!document.querySelector('#timer-root')`), true, 'al cerrar la ronda sí se descansa');
+  await click('[data-action=timer-stop]');
+
+  // Molestia anotada desde el ejercicio: aviso en la tarjeta
+  await click('[data-action=entry-menu][data-ex="curl-biceps-mancuernas"]');
+  await sleep(100);
+  await click('[data-act=pain]');
+  await sleep(100);
+  await setVal('#p-note', 'al subir el brazo');
+  await evaluate(`document.querySelector('#pain-form').requestSubmit()`);
+  await sleep(300);
+  assert.match(await text(), /Molestia en bíceps/);
+  await shot('05f-molestia');
+
+  // Ejercicio por tiempo: cuenta atrás
+  await click('[data-action=add-exercise]');
+  await sleep(100);
+  await setVal('#ae-q', 'plancha');
+  await sleep(100);
+  await click('[data-pick=plancha]');
+  await sleep(200);
+  await click('[data-action=countdown]');
+  await sleep(300);
+  assert.equal(await evaluate(`!!document.querySelector('#timer-root')`), true, 'no arrancó la cuenta atrás');
+  await click('[data-action=timer-stop]');
+  await click('[data-action=finish]');
+  await sleep(250);
+  assert.match(await text(), /Entreno guardado/);
+  await click('[data-ok]');
+  await sleep(100);
+
+  // Molestias: lista y marcar como resuelta
+  await tab('more');
+  await click('[data-action=sub][data-v=pains]');
+  await sleep(150);
+  assert.match(await text(), /bíceps/i);
+  await click('[data-action=resolve-pain]');
+  await sleep(200);
+  assert.match(await text(), /Resueltas/i);
+  assert.match(await text(), /Sin molestias activas/);
+
+  // Objetivo: fuerza cambia el rango del press a 3-6; descanso propio del ejercicio; se restaura después
+  await tab('more');
+  await click('[data-action=sub][data-v=settings]');
+  await sleep(100);
+  await click('[data-action=set][data-k=goal][data-v=strength]');
+  await sleep(200);
+  await tab('more');
+  await click('[data-action=sub][data-v=exercises]');
+  await sleep(100);
+  await click('[data-action=exercise][data-id=press-pecho-maquina]');
+  await sleep(200);
+  assert.equal(await evaluate(`document.querySelector('#x-rmin').value`), '3');
+  assert.equal(await evaluate(`document.querySelector('#x-rmax').value`), '6');
+  assert.match(await evaluate(`document.querySelector('#x-rest option').textContent`), /Automático \(150 s/);
+  await setVal('#x-rest', '45');
+  await evaluate(`document.querySelector('#x-rmin').value = '3'; document.querySelector('#x-rmax').value = '6'; document.querySelector('#ex-form').requestSubmit()`);
+  await sleep(250);
+  assert.equal(await evaluate(`window.__store().state.exerciseSettings['press-pecho-maquina'].rest`), 45);
+  // restaurar: objetivo hipertrofia y sin ajustes propios del press (para el resto de la prueba)
+  await evaluate(`window.__store().update((d) => { d.settings.goal = 'hypertrophy'; delete d.exerciseSettings['press-pecho-maquina']; })`);
+  await sleep(200);
+  assert.equal(await evaluate(`window.__store().state.settings.goal`), 'hypertrophy');
+
   // Semilla de datos ficticios para estadísticas y consejos (mismas fechas relativas al día simulado)
   await evaluate(`(async () => {
     const st = window.__store();
@@ -235,6 +322,57 @@ try {
   await tab('train');
   assert.match(await text(), /Sugerencia para hoy/i);
   await shot('08-inicio-con-datos');
+
+  // Más de 10 días sin entrenar: aviso amable en Inicio
+  await evaluate(`window.__setToday('2026-12-20')`);
+  await sleep(150);
+  assert.match(await text(), /Llevas 25 días sin entrenar/);
+  await evaluate(`window.__setToday('2026-11-25')`);
+  await sleep(150);
+
+  // Estadísticas: calendario de constancia y volumen por músculo
+  await tab('stats');
+  t = await text();
+  assert.match(t, /Constancia \(16 semanas\)/);
+  assert.match(t, /Volumen por músculo/);
+  assert.ok((await evaluate(`document.querySelectorAll('.cal i.l2, .cal i.l3').length`)) >= 3, 'el calendario debe marcar los días entrenados');
+  await shot('08b-constancia');
+
+  // Récords
+  await tab('more');
+  await click('[data-action=sub][data-v=records]');
+  await sleep(150);
+  t = await text();
+  assert.match(t, /Press de pecho en máquina/);
+  assert.match(t, /🏆/);
+  await shot('08c-records');
+
+  // Informe mensual: se ve el mes actual, se puede ir al anterior y el HTML es autónomo
+  await tab('more');
+  await click('[data-action=sub][data-v=report]');
+  await sleep(250);
+  assert.ok((await evaluate(`document.querySelector('#report-frame').srcdoc`)).includes('Informe de noviembre de 2026'));
+  assert.equal(await evaluate(`document.querySelector('#report-frame').srcdoc.includes('<script')`), false);
+  await shot('08d-informe');
+  await click('[data-action=report-month][data-v="-1"]');
+  await sleep(200);
+  assert.match(await text(), /Sin entrenos este mes/);
+  await click('[data-action=report-month][data-v="1"]');
+  await sleep(200);
+
+  // Comparar dos sesiones desde el historial
+  await tab('history');
+  await click('[data-action=open-session]');
+  await sleep(200);
+  await click('[data-act=compare]');
+  await sleep(200);
+  await click('[data-pick]');
+  await sleep(250);
+  assert.match(await text(), /Comparar sesiones/);
+  assert.match(await text(), /Las diferencias son B − A/);
+  await shot('08e-comparar');
+  await click('[data-close]');
+  await sleep(100);
 
   // Ejercicios: búsqueda y ficha con silueta
   await tab('more');
@@ -274,9 +412,9 @@ try {
   // Exportar → contenido válido
   const exported = JSON.parse(await evaluate(`window.__store().exportJson()`));
   assert.equal(exported.app, 'gym-record');
-  assert.equal(exported.data.sessions.length, 5);
+  assert.equal(exported.data.sessions.length, 6);
   assert.equal(exported.data.routines.length, 2);
-  assert.equal(exported.data.schemaVersion, 3);
+  assert.equal(exported.data.schemaVersion, 4);
 
   // Service worker activo y manifiesto
   const sw = await evaluate(`navigator.serviceWorker.ready.then(r => !!r.active)`);

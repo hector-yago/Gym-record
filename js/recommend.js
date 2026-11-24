@@ -19,7 +19,7 @@ const allRpe = (sets, v) => sets.length > 0 && sets.every((s) => s.rpe === v);
  * Recomendación para un ejercicio a partir de su historial (más antiguo primero) y `today`.
  * Devuelve null si no hay datos. kind: raise_weight | lower_weight | more_reps | add_set | remove_set | change_exercise | keep.
  */
-export function exerciseRecommendation(exercise, history, today, alternatives = []) {
+export function exerciseRecommendation(exercise, history, today, alternatives = [], opts = {}) {
   const n = history.length;
   if (!n) return null;
   const last = history[n - 1];
@@ -59,7 +59,7 @@ export function exerciseRecommendation(exercise, history, today, alternatives = 
   }
 
   // 2. Progreso: subir peso
-  if (allMax || allEasy) {
+  if (allMax || (allEasy && !opts.conservative)) {
     if (step > 0 && last.topKg > 0) {
       const kg = round1(last.topKg + step);
       return { ...base, kind: 'raise_weight', priority: 3, target: { kg, reps: min }, title: `Sube a ${fmtKg(kg)}${unit}`, detail: `${allMax ? `Has llegado a ${max} repeticiones en todas las series` : 'Te ha resultado fácil'}. Sube ${fmtKg(step)} kg y vuelve a ${min}-${max} reps.`, why: allMax ? `Todas las series ≥ ${max} reps con ${fmtKg(last.topKg)}${unit}.` : 'Todas las series marcadas «fácil».' };
@@ -69,7 +69,7 @@ export function exerciseRecommendation(exercise, history, today, alternatives = 
 
   // 3. Estancamiento: 3 sesiones sin mejorar el 1RM estimado
   const k = THRESHOLDS.stagnantSessions;
-  if (n >= k + 1) {
+  if (!opts.conservative && n >= k + 1) {
     const recent = history.slice(-k).map((h) => h.best1rm);
     const earlier = Math.max(...history.slice(0, -k).map((h) => h.best1rm));
     if (Math.max(...recent) <= earlier * 1.005) {

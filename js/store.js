@@ -190,11 +190,13 @@ export function createStore(adapter, { now = () => Date.now() } = {}) {
         const ids = new Set(doc.sessions.map((s) => s.id));
         const exIds = new Set(doc.customExercises.map((e) => e.id));
         const routineIds = new Set(doc.routines.map((r) => r.id));
+        const painIds = new Set(doc.pains.map((p) => p.id));
         const dates = new Set(doc.bodyweight.map((w) => w.date));
         const settings = { ...incoming.exerciseSettings, ...doc.exerciseSettings }; // lo local manda
         doc = migrate({
           ...doc,
           sessions: [...doc.sessions, ...incoming.sessions.filter((s) => !ids.has(s.id))],
+          pains: [...doc.pains, ...incoming.pains.filter((p) => !painIds.has(p.id))],
           routines: [...doc.routines, ...incoming.routines.filter((r) => !routineIds.has(r.id))],
           customExercises: [...doc.customExercises, ...incoming.customExercises.filter((e) => !exIds.has(e.id))],
           bodyweight: [...doc.bodyweight, ...incoming.bodyweight.filter((w) => !dates.has(w.date))],
