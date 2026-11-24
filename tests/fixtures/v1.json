@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "sessions": [
+    { "id": "s1", "date": "2026-11-10", "startedAt": 1794300000000, "endedAt": 1794303600000, "notes": "Buen día",
+      "entries": [
+        { "exerciseId": "press-pecho-maquina", "notes": "Asiento en 4", "sets": [ { "kg": 30, "reps": 12, "warmup": true }, { "kg": 40, "reps": 10, "rpe": 2 }, { "kg": 40, "reps": 9 } ] },
+        { "exerciseId": "jalon-pecho", "notes": "", "sets": [ { "kg": 45, "reps": 10 } ] }
+      ] },
+    { "id": "s2", "date": "2026-11-17", "startedAt": 1794900000000, "endedAt": 1794903000000, "notes": "", "entries": [ { "exerciseId": "custom-1", "notes": "", "sets": [ { "kg": 10, "reps": 15, "rpe": 1 } ] } ] }
+  ],
+  "customExercises": [ { "id": "custom-1", "name": "Máquina rara del fondo", "alt": "", "primary": "quads", "secondary": ["glutes"], "equipment": "machine", "step": 5, "reps": [10, 15], "how": "" } ],
+  "exerciseSettings": { "press-pecho-maquina": { "nickname": "La de pecho azul", "step": 2.5, "reps": [8, 12], "photo": true } },
+  "bodyweight": [ { "date": "2026-11-01", "kg": 80.4 }, { "date": "2026-11-15", "kg": 79.8 } ],
+  "settings": { "theme": "dark", "targetPerWeek": 3, "restSeconds": 120, "backupReminderDays": 14, "sound": false },
+  "meta": { "lastExport": 1794000000000 }
+}
