@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 2,
+  "sessions": [
+    { "id": "s1", "date": "2026-11-24", "startedAt": 1795000000000, "endedAt": 1795003600000, "notes": "",
+      "entries": [
+        { "exerciseId": "press-pecho-maquina", "notes": "", "sets": [ { "kg": 40, "reps": 10, "rpe": 2 } ], "blocks": [] },
+        { "exerciseId": "cinta", "notes": "Inclinación 3", "sets": [], "blocks": [ { "min": 20, "km": 2.4, "incline": 3, "bpm": 140, "rpe": 2 }, { "min": 5, "km": 0.5 } ] }
+      ] }
+  ],
+  "customExercises": [],
+  "exerciseSettings": {},
+  "bodyweight": [],
+  "settings": { "theme": "system", "targetPerWeek": 2, "restSeconds": 90, "backupReminderDays": 14, "sound": true, "cardioTargetMin": 120 },
+  "meta": {}
+}

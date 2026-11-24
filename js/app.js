@@ -2,7 +2,11 @@
 // Sin dependencias ni paso de build. La lógica está en módulos puros (workouts, stats, recommend).
 import { VERSION } from './version.js';
 import { addDays, agoLabel, DOW_NAMES, dayKey, diffDays, isoDow, isValidKey, weekStart } from './dates.js';
-import { CATALOG, displayName, EQUIPMENT, exerciseIndex, MUSCLE_IDS, MUSCLES, resolveExercises, searchExercises, STEP_OPTIONS } from './catalog.js';
+import { CATALOG, CARDIO_GROUP, displayName, EQUIPMENT, exerciseIndex, groupName, groupOrder, MUSCLE_IDS, MUSCLES, resolveExercises, searchExercises, STEP_OPTIONS } from './catalog.js';
+import {
+  cardioGeneralRecommendations, cardioHistory, cardioRecommendation, cardioTotals, CARDIO_METRICS, describeBlocks, isCardio, lastCardio, nextCardioDraft, sanitizeBlock,
+  sessionCardioMinutes, weeklyCardio,
+} from './cardio.js';
 import {
   activeSession, describeSets, est1RM, exerciseHistory, finished, fmtKg, lastPerformance, newId, newRecords, newSession, nextDraft, records,
   RPE_LABELS, sanitizeSet, sessionSetCount, sessionVolume, workingSets,
@@ -23,7 +27,7 @@ let fakeToday = FAKE_OK && isValidKey(params.get('hoy') ?? '') ? params.get('hoy
 const today = () => fakeToday ?? dayKey(new Date());
 if (FAKE_OK) window.__setToday = (k) => { fakeToday = k; render(); };
 
-const ui = { view: 'train', search: '', muscle: '', drafts: {}, statEx: '', statDays: 7, storageWarning: '', persisted: null, timerEndedAt: 0 };
+const ui = { view: 'train', search: '', muscle: '', drafts: {}, statEx: '', statCardio: '', statDays: 7, storageWarning: '', persisted: null, timerEndedAt: 0 };
 let store;
 const timer = createTimer();
 let cache = { doc: null };
@@ -38,7 +42,9 @@ function ex() {
 }
 const exName = (id) => displayName(ex().map.get(id));
 const doneSessions = () => finished(store.state.sessions);
-const musName = (m) => MUSCLES[m]?.name ?? m;
+const musName = groupName;
+/** Chips de filtro: músculos y, al final, cardio. */
+const GROUPS = [...MUSCLE_IDS, CARDIO_GROUP];
 const kgStepOf = (e) => (e.step > 0 ? e.step : 2.5);
 const repStepOf = (e) => (e.reps[1] >= 30 ? 5 : 1);
 const repUnit = (e) => (e.reps[1] >= 30 ? 'seg' : 'reps');
@@ -53,13 +59,21 @@ async function startSession({ exerciseIds = [] } = {}) {
   if (activeSession(store.state.sessions)) return;
   ui.drafts = {};
   const s = newSession(today(), Date.now());
-  s.entries = exerciseIds.map((exerciseId) => ({ exerciseId, notes: '', sets: [] }));
+  s.entries = exerciseIds.map((exerciseId) => ({ exerciseId, notes: '', sets: [], blocks: [] }));
   await store.update((d) => { d.sessions.push(s); });
   ui.view = 'train';
 }
 
 async function addExercise(sid, exerciseId) {
-  await mutateSession(sid, (s) => { if (!s.entries.some((e) => e.exerciseId === exerciseId)) s.entries.push({ exerciseId, notes: '', sets: [] }); });
+  await mutateSession(sid, (s) => { if (!s.entries.some((e) => e.exerciseId === exerciseId)) s.entries.push({ exerciseId, notes: '', sets: [], blocks: [] }); });
+}
+
+async function registerBlock(sid, exerciseId) {
+  const d = ui.drafts[exerciseId];
+  const block = sanitizeBlock({ ...d, min: d?.min });
+  if (!block) return toast('Indica al menos 1 minuto.');
+  ui.drafts[exerciseId] = { ...d, rpe: null };
+  await mutateSession(sid, (s) => s.entries.find((e) => e.exerciseId === exerciseId)?.blocks.push(block));
 }
 
 async function registerSet(sid, exerciseId) {
@@ -76,9 +90,9 @@ async function registerSet(sid, exerciseId) {
 async function finishSession(sid) {
   const s = store.state.sessions.find((x) => x.id === sid);
   if (!s) return;
-  const withSets = s.entries.filter((e) => e.sets.length);
+  const withSets = s.entries.filter((e) => e.sets.length || e.blocks?.length);
   if (!withSets.length) {
-    return confirmSheet('Sesión vacía', 'No hay ninguna serie registrada. ¿Descartar el entrenamiento?', 'Descartar', async () => {
+    return confirmSheet('Sesión vacía', 'No hay ninguna serie ni bloque de cardio registrado. ¿Descartar el entrenamiento?', 'Descartar', async () => {
       await store.update((d) => { d.sessions = d.sessions.filter((x) => x.id !== sid); });
       ui.drafts = {}; timer.stop(); tick();
     });
@@ -104,7 +118,7 @@ function viewTrain() {
 }
 
 function recKindIcon(kind) {
-  return { raise_weight: ['⬆️', 'up'], lower_weight: ['⬇️', 'down'], more_reps: ['🔁', ''], add_set: ['➕', ''], remove_set: ['➖', 'down'], change_exercise: ['🔄', ''], train_muscle: ['🎯', ''], balance: ['⚖️', ''], frequency: ['📅', ''] }[kind] ?? ['💡', ''];
+  return { raise_weight: ['⬆️', 'up'], lower_weight: ['⬇️', 'down'], more_reps: ['🔁', ''], add_set: ['➕', ''], remove_set: ['➖', 'down'], change_exercise: ['🔄', ''], train_muscle: ['🎯', ''], balance: ['⚖️', ''], frequency: ['📅', ''], cardio_up: ['⬆️', 'up'], cardio_down: ['⬇️', 'down'], cardio_time: ['⏱', ''], cardio_keep: ['👍', ''], cardio_add: ['🏃', ''] }[kind] ?? ['💡', ''];
 }
 function recHtml(r, { link = false } = {}) {
   const [icon, tone] = recKindIcon(r.kind);
@@ -122,12 +136,13 @@ function allRecommendations() {
   for (const id of used) {
     const e = map.get(id);
     if (!e) continue;
-    const alts = suggestExercises(list, e.primary, new Map(), 4).filter((a) => a.id !== id);
-    const rec = exerciseRecommendation(e, exerciseHistory(done, id), t, alts);
+    let rec;
+    if (isCardio(e)) rec = cardioRecommendation(e, cardioHistory(done, id), t);
+    else rec = exerciseRecommendation(e, exerciseHistory(done, id), t, suggestExercises(list, e.primary, new Map(), 4).filter((a) => a.id !== id));
     if (rec) perExercise.push(rec);
   }
   perExercise.sort((a, b) => b.priority - a.priority);
-  const general = [frequencyRecommendation(avgPerWeek(done, t), store.state.settings.targetPerWeek, done.length), balanceRecommendation(done, map, t)].filter(Boolean);
+  const general = [frequencyRecommendation(avgPerWeek(done, t), store.state.settings.targetPerWeek, done.length), balanceRecommendation(done, map, t), ...cardioGeneralRecommendations(done, t, store.state.settings.cardioTargetMin)].filter(Boolean);
   return { perExercise, muscles: muscleRecommendations(done, list, map, t), general };
 }
 
@@ -136,6 +151,7 @@ function viewHome() {
   const done = doneSessions();
   const target = store.state.settings.targetPerWeek;
   const week = weeklyCounts(done, t, 1)[0].count;
+  const weekCardio = weeklyCardio(done, t, 1)[0].minutes;
   const dots = Array.from({ length: Math.max(target, week) }, (_, i) => `<span class="tag ${i < week ? 'ok' : ''}">${i < week ? '✓' : '·'}</span>`).join('');
   const banner = store.backupDue() ? `<div class="banner" role="alert"><span>Hace tiempo que no exportas una copia de tus entrenos.</span><button class="btn small" data-action="export">Exportar</button></div>` : '';
   const warn = ui.storageWarning ? `<div class="banner" role="alert">${esc(ui.storageWarning)}</div>` : '';
@@ -149,7 +165,7 @@ function viewHome() {
   const recCard = top.length ? `<section class="group"><h2><span>Consejos</span><button class="btn small" data-action="tab" data-v="advice">Ver todos</button></h2><div class="card">${top.map((r) => recHtml(r, { link: true })).join('')}</div></section>` : '';
   const empty = !done.length ? `<div class="empty"><b>Aún no has registrado ningún entreno</b>Pulsa «Empezar entrenamiento», añade ejercicios del catálogo y registra tus series. Con unas sesiones empezaré a darte consejos.</div>` : '';
   return `${header('Entreno', longDate(t))}${warn}${banner}
-    <section class="group"><div class="card"><h3>Esta semana: ${week} de ${target}</h3><div>${dots}</div></div></section>
+    <section class="group"><div class="card"><h3>Esta semana: ${week} de ${target}</h3><div>${dots}</div>${weekCardio ? `<p class="hint">🏃 Cardio: ${weekCardio} de ~${store.state.settings.cardioTargetMin} min</p>` : ''}</div></section>
     <button class="btn primary big block" data-action="start" style="margin-bottom:18px">Empezar entrenamiento</button>
     ${empty}${planCard}${lastCard}${recCard}`;
 }
@@ -157,9 +173,17 @@ function viewHome() {
 const summaryTitle = (s) => `${DOW_NAMES[isoDow(s.date)].replace(/^./, (c) => c.toUpperCase())} ${s.date.slice(8)}/${s.date.slice(5, 7)}`;
 function sessionMeta(s) {
   const { map } = ex();
-  const muscles = [...new Set(s.entries.map((e) => map.get(e.exerciseId)?.primary).filter(Boolean))].map((m) => musName(m).toLowerCase());
+  const muscles = [...new Set(s.entries.map((e) => map.get(e.exerciseId)?.primary).filter((m) => m && m !== CARDIO_GROUP))].map((m) => musName(m).toLowerCase());
   const mins = sessionMinutes(s);
-  return `${s.entries.length} ejercicios · ${sessionSetCount(s)} series${sessionVolume(s) ? ` · ${fmtNum(sessionVolume(s))} kg` : ''}${mins ? ` · ${mins} min` : ''}${muscles.length ? ` · ${muscles.slice(0, 3).join(', ')}` : ''}`;
+  const cardio = sessionCardioMinutes(s);
+  const strength = s.entries.filter((e) => e.sets.length).length;
+  return [
+    strength ? `${strength} ${strength === 1 ? 'ejercicio' : 'ejercicios'} · ${sessionSetCount(s)} series` : '',
+    sessionVolume(s) ? `${fmtNum(sessionVolume(s))} kg` : '',
+    cardio ? `${cardio} min de cardio` : '',
+    mins ? `${mins} min` : '',
+    muscles.length ? muscles.slice(0, 3).join(', ') : '',
+  ].filter(Boolean).join(' · ');
 }
 
 /* ---- sesión en curso ---- */
@@ -178,9 +202,32 @@ function stepper(exerciseId, field, value, unit, step) {
     <button type="button" data-action="step" data-ex="${esc(exerciseId)}" data-f="${field}" data-d="${step}" aria-label="Más ${unit}">+</button></div>`;
 }
 
+/** Tarjeta de un ejercicio de cardio: bloques (tiempo, distancia, nivel, inclinación, pulsaciones) y esfuerzo. */
+function cardioCard(s, entry, e) {
+  const done = doneSessions();
+  const last = lastCardio(done, e.id);
+  const draft = (ui.drafts[e.id] ??= nextCardioDraft(entry, last, e));
+  const rec = cardioRecommendation(e, cardioHistory(done, e.id), today());
+  const chips = (entry.blocks ?? []).map((b, i) => `<button class="setchip" data-action="edit-block" data-id="${esc(s.id)}" data-ex="${esc(e.id)}" data-i="${i}" aria-label="Bloque ${i + 1}: editar">${esc(describeBlocks([b]))}${b.rpe ? ` <small>${['', '😌', '👌', '🥵'][b.rpe]}</small>` : ''}</button>`).join('');
+  const target = rec?.target ?? {};
+  const suggest = rec && rec.priority > 0 && !entry.blocks?.length ? `<button class="suggest" data-action="apply-cardio-rec" data-ex="${esc(e.id)}" data-min="${target.min ?? ''}" data-level="${target.level ?? ''}" data-incline="${target.incline ?? ''}"><b>${esc(rec.title)}</b> · ${esc(rec.detail)}${rec.target ? ' <u>Aplicar</u>' : ''}</button>` : '';
+  const metrics = (e.metrics ?? []).map((m) => stepper(e.id, m, draft[m] ?? 0, CARDIO_METRICS[m].unit, CARDIO_METRICS[m].step)).join('');
+  return `<article class="entry" data-ex="${esc(e.id)}">
+    <div class="entry-head"><div class="t"><b>${esc(displayName(e))}</b><small>Cardio · ${esc(EQUIPMENT[e.equipment] ?? '')}</small></div><button class="more" data-action="entry-menu" data-id="${esc(s.id)}" data-ex="${esc(e.id)}" aria-label="Más acciones">⋯</button></div>
+    ${last ? `<p class="hint">Última vez (${esc(agoLabel(last.date, today()))}): ${esc(describeBlocks(last.blocks))}</p>` : '<p class="hint">Primera vez: empieza a un ritmo en el que puedas hablar.</p>'}
+    ${entry.notes ? `<p class="hint">📝 ${esc(entry.notes)}</p>` : ''}
+    ${suggest}
+    ${chips ? `<div class="sets">${chips}</div>` : ''}
+    <div class="draft">${stepper(e.id, 'min', draft.min, 'min', 5)}${metrics}</div>
+    <div class="rpe" role="group" aria-label="Esfuerzo (opcional)">${[1, 2, 3].map((v) => `<button type="button" data-action="rpe" data-ex="${esc(e.id)}" data-v="${v}" aria-pressed="${draft.rpe === v}">${['', '😌', '👌', '🥵'][v]} ${RPE_LABELS[v]}</button>`).join('')}</div>
+    <button class="btn primary block" data-action="register-block" data-id="${esc(s.id)}" data-ex="${esc(e.id)}">Registrar ${entry.blocks?.length ? `bloque ${entry.blocks.length + 1}` : 'cardio'}</button>
+  </article>`;
+}
+
 function entryCard(s, entry) {
   const { list, map } = ex();
   const e = map.get(entry.exerciseId) ?? { id: entry.exerciseId, name: 'Ejercicio desconocido', primary: '', secondary: [], reps: [8, 12], step: 2.5, equipment: 'other' };
+  if (isCardio(e)) return cardioCard(s, entry, e);
   const done = doneSessions();
   const last = lastPerformance(done, e.id);
   const draft = (ui.drafts[e.id] ??= nextDraft(entry, last, e));
@@ -239,6 +286,21 @@ function viewStats() {
     ${lineChart(hist.slice(-20).map((h) => ({ label: shortDate(h.date), y: h.best1rm })), { unit: 'kg (1RM estimado)' })}
     <p>🏆 Peso máximo: <b>${fmtKg(rec.topKg)} kg</b> (${esc(fmtDate(rec.topKgDate))}) · 1RM estimado: <b>${fmtNum(rec.best1rm, 1)} kg</b> · ${hist.length} sesiones</p>
     <p class="hint">El 1RM estimado (fórmula de Epley) es el peso máximo que podrías levantar una vez; sirve para comparar sesiones con distintas repeticiones.</p></div>` : '';
+  // Cardio: minutos por semana, progreso por actividad
+  const ct = cardioTotals(done);
+  const cw = weeklyCardio(done, t, 8);
+  const maxCw = Math.max(1, ...cw.map((w) => w.minutes));
+  const cardioBars = cw.map((w) => `<div title="Semana del ${fmtDate(w.from)}: ${w.minutes} min"><i class="${w.minutes ? '' : 'zero'}" style="height:${Math.max(3, (w.minutes / maxCw) * 70)}px"></i><span>${w.minutes}</span></div>`).join('');
+  const cardioEx = list.filter((e) => isCardio(e) && cardioHistory(done, e.id).length);
+  const cSel = cardioEx.find((e) => e.id === ui.statCardio) ?? cardioEx.sort((a, b) => cardioHistory(done, b.id).at(-1).date.localeCompare(cardioHistory(done, a.id).at(-1).date))[0];
+  const cHist = cSel ? cardioHistory(done, cSel.id) : [];
+  const withKm = cHist.filter((h) => h.speed);
+  const cardioBlock = ct.minutes > 0 ? `<div class="card"><h3>Cardio por semana (minutos)</h3><div class="bars">${cardioBars}</div>
+    <p class="hint">Referencia orientativa para adultos: ~${store.state.settings.cardioTargetMin} min/semana de actividad moderada (se cambia en Ajustes).</p></div>
+    ${cSel ? `<div class="card"><h3>Progreso de cardio</h3><div class="field"><select id="stat-cardio" aria-label="Actividad de cardio">${[...cardioEx].sort((a, b) => displayName(a).localeCompare(displayName(b), 'es')).map((e) => `<option value="${esc(e.id)}" ${e.id === cSel.id ? 'selected' : ''}>${esc(displayName(e))}</option>`).join('')}</select></div>
+      ${lineChart(cHist.slice(-20).map((h) => ({ label: shortDate(h.date), y: h.minutes })), { unit: 'min' })}
+      ${withKm.length >= 2 ? `<p class="hint">Velocidad media (km/h)</p>${lineChart(withKm.slice(-20).map((h) => ({ label: shortDate(h.date), y: h.speed })), { unit: 'km/h' })}` : ''}
+      <p>${cHist.length} ${cHist.length === 1 ? 'sesión' : 'sesiones'} · mejor: <b>${Math.max(...cHist.map((h) => h.minutes))} min</b>${withKm.length ? ` · velocidad máx. <b>${fmtNum(Math.max(...withKm.map((h) => h.speed)), 1)} km/h</b>` : ''}</p></div>` : ''}` : '';
   const bw = store.state.bodyweight;
   const bwBlock = bw.length >= 2 ? `<div class="card"><h3>Peso corporal</h3>${lineChart(bw.slice(-30).map((w) => ({ label: shortDate(w.date), y: w.kg })), { unit: 'kg' })}</div>` : '';
   return `${header('Estadísticas', `${tot.sessions} entrenamientos en total`)}
@@ -247,11 +309,13 @@ function viewStats() {
       <div class="kpi"><b>${weekStreak(done, t, store.state.settings.targetPerWeek)}</b><span>semanas seguidas con objetivo</span></div>
       <div class="kpi"><b>${fmtNum(tot.volume / 1000, 1)} t</b><span>volumen total levantado</span></div>
       <div class="kpi"><b>${fmtNum(tot.minutes / 60, 1)} h</b><span>tiempo entrenando</span></div>
+      <div class="kpi"><b>${cw.at(-1).minutes} min</b><span>cardio esta semana</span></div>
+      <div class="kpi"><b>${fmtNum(ct.minutes / 60, 1)} h</b><span>cardio en total</span></div>
     </div>
     <div class="card"><h3>Sesiones por semana (8 semanas)</h3><div class="bars">${bars}</div></div>
     <div class="card"><h3>Músculos trabajados</h3><div class="seg" role="group" aria-label="Periodo"><button data-action="stat-days" data-v="7" aria-pressed="${days === 7}">7 días</button><button data-action="stat-days" data-v="30" aria-pressed="${days === 30}">30 días</button></div>
       ${muscleMapSvg({ intensity })}<p class="hint">Más intenso = más series (secundarios cuentan la mitad). Objetivo orientativo: ~10 series por músculo y semana.</p>${rows}</div>
-    ${exBlock}${bwBlock}`;
+    ${exBlock}${cardioBlock}${bwBlock}`;
 }
 
 /* ---- consejos ---- */
@@ -264,7 +328,7 @@ function viewAdvice() {
   return `${header('Consejos', 'Reglas locales: sin IA, explicables')}
     ${sec('General', r.general)}${sec('Por ejercicio (últimos 60 días)', r.perExercise)}${sec('Músculos descuidados', r.muscles)}
     ${none ? '<div class="empty"><b>Todo en orden</b>No hay nada que ajustar ahora.</div>' : ''}
-    <p class="hint">Doble progresión: cuando llegas al tope de repeticiones en todas las series, sube el peso; si no llegas al mínimo dos sesiones seguidas, bájalo.</p>`;
+    <p class="hint">Fuerza: cuando llegas al tope de repeticiones en todas las series, sube el peso; si no llegas al mínimo dos sesiones seguidas, bájalo. Cardio: dos sesiones «fácil» seguidas → más intensidad; dos «al límite» → menos.</p>`;
 }
 
 /* ---- más ---- */
@@ -272,15 +336,15 @@ function viewMore() {
   const item = (id, title, meta) => `<li class="row"><button class="body" data-action="sub" data-v="${id}"><span class="title">${title}</span><span class="meta">${meta}</span></button><span class="chev">›</span></li>`;
   const bw = store.state.bodyweight.at(-1);
   return `${header('Más')}<ul class="list">
-    ${item('exercises', 'Ejercicios', `Catálogo de ${CATALOG.length} + los tuyos: músculo, cómo se usa, foto y apodo`)}
+    ${item('exercises', 'Ejercicios', `Catálogo de ${CATALOG.length} (fuerza y cardio) + los tuyos: cómo se usa, foto y apodo`)}
     ${item('bodyweight', 'Peso corporal', bw ? `Último: ${fmtKg(bw.kg)} kg (${esc(fmtDate(bw.date))})` : 'Registra tu peso')}
     ${item('settings', 'Ajustes', 'Tema, descanso, objetivo semanal, copias')}</ul><p class="hint" style="text-align:center;margin-top:18px">Gym Record ${VERSION}</p>`;
 }
 
 function viewExercises() {
   const { list } = ex();
-  const found = searchExercises(list, ui.search, ui.muscle).sort((a, b) => MUSCLE_IDS.indexOf(a.primary) - MUSCLE_IDS.indexOf(b.primary) || displayName(a).localeCompare(displayName(b), 'es'));
-  const chips = `<div class="chips" role="group" aria-label="Filtrar por músculo"><button class="chipb" data-action="muscle" data-v="" aria-pressed="${!ui.muscle}">Todos</button>${MUSCLE_IDS.map((m) => `<button class="chipb" data-action="muscle" data-v="${m}" aria-pressed="${ui.muscle === m}">${esc(musName(m))}</button>`).join('')}</div>`;
+  const found = searchExercises(list, ui.search, ui.muscle).sort((a, b) => groupOrder(a.primary) - groupOrder(b.primary) || displayName(a).localeCompare(displayName(b), 'es'));
+  const chips = `<div class="chips" role="group" aria-label="Filtrar por músculo o cardio"><button class="chipb" data-action="muscle" data-v="" aria-pressed="${!ui.muscle}">Todos</button>${GROUPS.map((m) => `<button class="chipb" data-action="muscle" data-v="${m}" aria-pressed="${ui.muscle === m}">${esc(musName(m))}</button>`).join('')}</div>`;
   const rows = found.map((e) => `<li class="row"><button class="body" data-action="exercise" data-id="${esc(e.id)}"><span class="title">${esc(displayName(e))}${e.nickname ? `<span class="tag">${esc(e.name)}</span>` : ''}${e.custom ? '<span class="tag">propio</span>' : ''}</span><span class="meta">${esc(musName(e.primary))} · ${esc(EQUIPMENT[e.equipment])}${e.alt && !e.nickname ? ` · ${esc(e.alt)}` : ''}</span></button><span class="chev">›</span></li>`).join('');
   return `${header('Ejercicios', `${found.length} ejercicios`, true)}
     <div class="toolbar"><input id="q" type="search" placeholder="Buscar: nombre, músculo, máquina…" value="${esc(ui.search)}" aria-label="Buscar ejercicio" /></div>
@@ -305,6 +369,7 @@ function viewSettings() {
       ${seg('Objetivo semanal', 'targetPerWeek', [1, 2, 3, 4, 5].map((n) => [n, n]))}
       ${seg('Descanso entre series', 'restSeconds', [[60, '1:00'], [90, '1:30'], [120, '2:00'], [180, '3:00']])}
       ${seg('Sonido del temporizador', 'sound', [[true, 'Sí'], [false, 'No']])}
+      ${seg('Cardio orientativo (min/semana)', 'cardioTargetMin', [[60, '60'], [90, '90'], [120, '120'], [150, '150'], [200, '200']])}
       <p>En iPhone el pitido solo suena con la app abierta y sin el interruptor de silencio; la vibración no está disponible en iOS.</p></div>
     <div class="card"><h3>Apariencia</h3>${seg('Tema', 'theme', [['system', 'Sistema'], ['light', 'Claro'], ['dark', 'Oscuro']])}</div>
     <div class="card"><h3>Copias de seguridad</h3><p>Tus datos solo están en este dispositivo. Última exportación: ${esc(last)}. ${ui.persisted === false ? 'Almacenamiento no persistente: exporta copias con frecuencia.' : ''}</p>
@@ -364,7 +429,7 @@ function summarySheet(s, recs) {
 function sessionSheet(id) {
   const s = store.state.sessions.find((x) => x.id === id);
   if (!s) return;
-  const body = s.entries.map((e) => `<div class="line"><span><b>${esc(exName(e.exerciseId))}</b><br><small class="hint">${esc(describeSets(workingSets(e)))}${e.sets.some((x) => x.warmup) ? ` · ${e.sets.filter((x) => x.warmup).length} calent.` : ''}${e.notes ? ` · 📝 ${esc(e.notes)}` : ''}</small></span></div>`).join('');
+  const body = s.entries.map((e) => `<div class="line"><span><b>${esc(exName(e.exerciseId))}</b><br><small class="hint">${esc(describeSets(workingSets(e)))}${e.blocks?.length ? esc(e.blocks.map((b) => describeBlocks([b])).join(' + ')) : ''}${e.sets.some((x) => x.warmup) ? ` · ${e.sets.filter((x) => x.warmup).length} calent.` : ''}${e.notes ? ` · 📝 ${esc(e.notes)}` : ''}</small></span></div>`).join('');
   openSheet(`<h2>${esc(summaryTitle(s))}</h2><p class="hint">${esc(sessionMeta(s))}</p>${s.notes ? `<p>📝 ${esc(s.notes)}</p>` : ''}${body}
     <div class="actions"><button class="btn grow" data-act="repeat">Repetir sesión</button><button class="btn grow" data-act="edit">Editar</button><button class="btn danger" data-act="delete">Borrar</button><button class="btn" data-act="close">Cerrar</button></div>`, (sh) => {
     sh.addEventListener('click', async (e) => {
@@ -405,9 +470,9 @@ function addExerciseSheet(sid) {
     const used = new Map();
     for (const x of store.state.sessions) for (const e of x.entries) used.set(e.exerciseId, (used.get(e.exerciseId) ?? 0) + 1);
     let found = searchExercises(list, state.q, state.muscle);
-    found = found.sort((a, b) => (used.get(b.id) ?? 0) - (used.get(a.id) ?? 0) || MUSCLE_IDS.indexOf(a.primary) - MUSCLE_IDS.indexOf(b.primary) || displayName(a).localeCompare(displayName(b), 'es'));
+    found = found.sort((a, b) => (used.get(b.id) ?? 0) - (used.get(a.id) ?? 0) || groupOrder(a.primary) - groupOrder(b.primary) || displayName(a).localeCompare(displayName(b), 'es'));
     $('#ae', sh).innerHTML = `<h2>Añadir ejercicio</h2><input id="ae-q" type="search" placeholder="Buscar: «pecho», «polea», «sentadilla»…" value="${esc(state.q)}" aria-label="Buscar" autofocus />
-      <div class="chips"><button class="chipb" data-m="" aria-pressed="${!state.muscle}">Todos</button>${MUSCLE_IDS.map((m) => `<button class="chipb" data-m="${m}" aria-pressed="${state.muscle === m}">${esc(musName(m))}</button>`).join('')}</div>
+      <div class="chips"><button class="chipb" data-m="" aria-pressed="${!state.muscle}">Todos</button>${GROUPS.map((m) => `<button class="chipb" data-m="${m}" aria-pressed="${state.muscle === m}">${esc(musName(m))}</button>`).join('')}</div>
       <ul class="list">${found.slice(0, 60).map((e) => `<li class="row"><button class="body" data-pick="${esc(e.id)}"><span class="title">${esc(displayName(e))}${used.get(e.id) ? '<span class="tag ok">usado</span>' : ''}${inSession.has(e.id) ? '<span class="tag">ya añadido</span>' : ''}</span><span class="meta">${esc(musName(e.primary))} · ${esc(EQUIPMENT[e.equipment])}${e.alt && !e.nickname ? ` · ${esc(e.alt)}` : ''}</span></button><button class="more" data-info="${esc(e.id)}" aria-label="Ver cómo se hace">ⓘ</button></li>`).join('') || '<li class="row"><span class="meta">Sin resultados.</span></li>'}</ul>
       <div class="actions"><button class="btn grow" data-new>+ Crear ejercicio propio</button><button class="btn" data-close>Cerrar</button></div>`;
     const q = $('#ae-q', sh);
@@ -441,7 +506,7 @@ function entryMenuSheet(sid, exId) {
       if (act === 'close') closeSheet();
       if (act === 'info') exerciseSheet(exId);
       if (act === 'up') { await mutateSession(sid, (x) => { const k = x.entries.findIndex((y) => y.exerciseId === exId); if (k > 0) [x.entries[k - 1], x.entries[k]] = [x.entries[k], x.entries[k - 1]]; }); closeSheet(); }
-      if (act === 'remove') confirmSheet('¿Quitar el ejercicio?', entry.sets.length ? `Se perderán sus ${entry.sets.length} series de esta sesión.` : 'No tiene series registradas.', 'Quitar', async () => { await mutateSession(sid, (x) => { x.entries = x.entries.filter((y) => y.exerciseId !== exId); }); delete ui.drafts[exId]; });
+      if (act === 'remove') confirmSheet('¿Quitar el ejercicio?', entry.sets.length || entry.blocks?.length ? `Se perderán sus ${entry.sets.length + (entry.blocks?.length ?? 0)} registros de esta sesión.` : 'No tiene nada registrado.', 'Quitar', async () => { await mutateSession(sid, (x) => { x.entries = x.entries.filter((y) => y.exerciseId !== exId); }); delete ui.drafts[exId]; });
       if (act === 'notes') {
         openSheet(`<h2>Nota: ${esc(exName(exId))}</h2><form id="n-form"><div class="field"><textarea id="n-text" maxlength="500" placeholder="Ajuste del asiento, molestias, sensaciones…" autofocus>${esc(entry.notes)}</textarea></div><div class="actions"><button class="btn primary grow" type="submit">Guardar</button><button class="btn" type="button" data-close>Cancelar</button></div></form>`, (s2) => {
           $('[data-close]', s2).addEventListener('click', closeSheet);
@@ -473,6 +538,31 @@ function editSetSheet(sid, exId, index) {
   });
 }
 
+function editBlockSheet(sid, exId, index) {
+  const s = store.state.sessions.find((x) => x.id === sid);
+  const b = s?.entries.find((e) => e.exerciseId === exId)?.blocks?.[index];
+  const e = ex().map.get(exId);
+  if (!b) return;
+  const field = (m) => `<div class="field"><label for="b-${m}">${CARDIO_METRICS[m].label} (${CARDIO_METRICS[m].unit})</label><input id="b-${m}" type="number" inputmode="decimal" step="any" min="0" value="${b[m] ?? ''}" /></div>`;
+  openSheet(`<h2>Bloque ${index + 1} · ${esc(exName(exId))}</h2><form id="blk-form">
+    <div class="field"><label for="b-min">Minutos</label><input id="b-min" type="number" inputmode="numeric" min="1" max="600" value="${b.min}" /></div>
+    ${(e?.metrics ?? Object.keys(CARDIO_METRICS)).map(field).join('')}
+    <div class="field"><label for="b-rpe">Esfuerzo</label><select id="b-rpe"><option value="">Sin indicar</option>${[1, 2, 3].map((v) => `<option value="${v}" ${b.rpe === v ? 'selected' : ''}>${RPE_LABELS[v]}</option>`).join('')}</select></div>
+    <div class="actions"><button class="btn primary grow" type="submit">Guardar</button><button class="btn danger" type="button" data-del>Borrar bloque</button><button class="btn" type="button" data-close>Cancelar</button></div></form>`, (sh) => {
+    $('[data-close]', sh).addEventListener('click', closeSheet);
+    $('[data-del]', sh).addEventListener('click', async () => { await mutateSession(sid, (x) => x.entries.find((en) => en.exerciseId === exId)?.blocks.splice(index, 1)); closeSheet(); });
+    $('#blk-form', sh).addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const raw = { min: $('#b-min', sh).value, rpe: Number($('#b-rpe', sh).value) || undefined };
+      for (const m of Object.keys(CARDIO_METRICS)) { const el = $(`#b-${m}`, sh); if (el) raw[m] = el.value; }
+      const next = sanitizeBlock(raw);
+      if (!next) return toast('Indica al menos 1 minuto.');
+      await mutateSession(sid, (x) => { const en = x.entries.find((y) => y.exerciseId === exId); if (en) en.blocks[index] = next; });
+      closeSheet();
+    });
+  });
+}
+
 /** Ficha del ejercicio: silueta, cómo se usa, foto propia, apodo, salto de peso, rango de reps e historial. */
 function exerciseSheet(id, onClose) {
   const e = ex().map.get(id);
@@ -480,16 +570,19 @@ function exerciseSheet(id, onClose) {
   const done = doneSessions();
   const hist = exerciseHistory(done, id);
   const rec = records(hist);
+  const card = isCardio(e);
+  const chist = card ? cardioHistory(done, id) : [];
   const stepOpts = [...new Set([...STEP_OPTIONS, e.step])].sort((a, b) => a - b);
   openSheet(`<h2>${esc(displayName(e))}</h2><p class="hint">${e.nickname ? `${esc(e.name)} · ` : ''}${e.alt ? `También: ${esc(e.alt)}` : ''}</p>
-    <p><b>${esc(musName(e.primary))}</b> (${esc(MUSCLES[e.primary]?.hint ?? '')})${e.secondary.length ? ` · también: ${esc(e.secondary.map(musName).join(', '))}` : ''} · ${esc(EQUIPMENT[e.equipment])}</p>
-    ${muscleMapSvg({ primary: [e.primary], secondary: e.secondary, label: `Músculos de ${displayName(e)}` })}
+    <p><b>${esc(musName(e.primary))}</b>${card ? '' : ` (${esc(MUSCLES[e.primary]?.hint ?? '')})`}${e.secondary.length ? ` · también: ${esc(e.secondary.map(musName).join(', '))}` : ''} · ${esc(EQUIPMENT[e.equipment])}${card && e.metrics?.length ? ` · se anota: tiempo${e.metrics.map((m) => `, ${CARDIO_METRICS[m].label.toLowerCase()}`).join('')}` : ''}</p>
+    ${card ? '' : muscleMapSvg({ primary: [e.primary], secondary: e.secondary, label: `Músculos de ${displayName(e)}` })}
     ${e.how ? `<p>${esc(e.how)}</p>` : ''}
     <div id="ph"></div><div class="actions"><label class="btn small">📷 Foto de la máquina<input id="ph-in" type="file" accept="image/*" hidden /></label><button class="btn small danger hidden" id="ph-del">Quitar foto</button></div>
-    ${hist.length ? `<p>${rec.topKg > 0 ? `🏆 Peso máximo <b>${fmtKg(rec.topKg)} kg</b> · 1RM est. <b>${fmtNum(rec.best1rm, 1)} kg</b> · ` : ''}${hist.length} ${hist.length === 1 ? 'sesión' : 'sesiones'} · última ${esc(agoLabel(hist.at(-1).date, today()))}</p>` : '<p class="hint">Aún no lo has hecho.</p>'}
+    ${card ? (chist.length ? `<p>${chist.length} ${chist.length === 1 ? 'sesión' : 'sesiones'} · ${chist.reduce((a, h) => a + h.minutes, 0)} min en total · última ${esc(agoLabel(chist.at(-1).date, today()))}</p>` : '<p class="hint">Aún no lo has hecho.</p>') : ''}
+    ${card ? '' : hist.length ? `<p>${rec.topKg > 0 ? `🏆 Peso máximo <b>${fmtKg(rec.topKg)} kg</b> · 1RM est. <b>${fmtNum(rec.best1rm, 1)} kg</b> · ` : ''}${hist.length} ${hist.length === 1 ? 'sesión' : 'sesiones'} · última ${esc(agoLabel(hist.at(-1).date, today()))}</p>` : '<p class="hint">Aún no lo has hecho.</p>'}
     <form id="ex-form"><div class="field"><label for="x-nick">Tu apodo para este ejercicio (opcional)</label><input id="x-nick" type="text" maxlength="60" value="${esc(e.nickname)}" placeholder="p. ej. «la de los brazos junto a la ventana»" /></div>
-      <div class="toolbar"><div class="field"><label for="x-step">Salto de peso (kg)</label><select id="x-step">${stepOpts.map((v) => `<option value="${v}" ${v === e.step ? 'selected' : ''}>${v === 0 ? 'Sin peso (corporal)' : String(v).replace('.', ',')}</option>`).join('')}</select></div>
-      <div class="field"><label for="x-rmin">Reps mín.</label><input id="x-rmin" type="number" min="1" max="100" value="${e.reps[0]}" /></div><div class="field"><label for="x-rmax">Reps máx.</label><input id="x-rmax" type="number" min="1" max="100" value="${e.reps[1]}" /></div></div>
+      ${card ? '' : `<div class="toolbar"><div class="field"><label for="x-step">Salto de peso (kg)</label><select id="x-step">${stepOpts.map((v) => `<option value="${v}" ${v === e.step ? 'selected' : ''}>${v === 0 ? 'Sin peso (corporal)' : String(v).replace('.', ',')}</option>`).join('')}</select></div>
+      <div class="field"><label for="x-rmin">Reps mín.</label><input id="x-rmin" type="number" min="1" max="100" value="${e.reps[0]}" /></div><div class="field"><label for="x-rmax">Reps máx.</label><input id="x-rmax" type="number" min="1" max="100" value="${e.reps[1]}" /></div></div>`}
       <div class="field"><label for="x-notes">Notas fijas (altura del asiento, agarre…)</label><textarea id="x-notes" maxlength="500">${esc(e.notes)}</textarea></div>
       <div class="actions"><button class="btn primary grow" type="submit">Guardar</button>${e.custom ? '<button class="btn" type="button" data-edit>Editar ejercicio</button>' : ''}<button class="btn" type="button" data-close>Cerrar</button></div></form>`, (sh) => {
     const close = () => { closeSheet(); onClose?.(); };
@@ -509,15 +602,14 @@ function exerciseSheet(id, onClose) {
     $('#ph-del', sh).addEventListener('click', async () => { await store.deletePhoto(id); e.hasPhoto = false; await showPhoto(); });
     $('#ex-form', sh).addEventListener('submit', async (ev) => {
       ev.preventDefault();
-      const a = Math.round(Number($('#x-rmin', sh).value));
-      const b = Math.round(Number($('#x-rmax', sh).value));
+      const a = card ? 1 : Math.round(Number($('#x-rmin', sh).value));
+      const b = card ? 1 : Math.round(Number($('#x-rmax', sh).value));
       if (!(a >= 1 && b >= a && b <= 100)) return toast('El rango de repeticiones no es válido.');
       await store.update((d) => {
         const o = { ...(d.exerciseSettings[id] ?? {}) };
         const nick = $('#x-nick', sh).value.trim();
         if (nick) o.nickname = nick; else delete o.nickname;
-        o.step = Number($('#x-step', sh).value);
-        o.reps = [a, b];
+        if (!card) { o.step = Number($('#x-step', sh).value); o.reps = [a, b]; }
         const nt = $('#x-notes', sh).value.trim();
         if (nt) o.notes = nt; else delete o.notes;
         d.exerciseSettings[id] = o;
@@ -617,7 +709,9 @@ async function backupsSheet() {
 function changeDraft(exId, field, value) {
   const e = ex().map.get(exId);
   const d = (ui.drafts[exId] ??= { kg: 0, reps: e?.reps?.[0] ?? 10, rpe: null, warmup: false });
-  d[field] = field === 'reps' ? Math.max(1, Math.round(value)) : Math.max(0, Math.round(value * 100) / 100);
+  const INTEGER = new Set(['reps', 'min', 'bpm', 'level']);
+  const MIN1 = new Set(['reps', 'min']);
+  d[field] = INTEGER.has(field) ? Math.max(MIN1.has(field) ? 1 : 0, Math.round(value)) : Math.max(0, Math.round(value * 100) / 100);
 }
 
 document.addEventListener('click', async (e) => {
@@ -638,10 +732,13 @@ document.addEventListener('click', async (e) => {
     else if (action === 'session-details') detailsSheet(id);
     else if (action === 'entry-menu') entryMenuSheet(id, exId);
     else if (action === 'edit-set') editSetSheet(id, exId, Number(el.dataset.i));
+    else if (action === 'edit-block') editBlockSheet(id, exId, Number(el.dataset.i));
     else if (action === 'step') { changeDraft(exId, el.dataset.f, Number(ui.drafts[exId]?.[el.dataset.f] ?? 0) + Number(el.dataset.d)); render(); }
     else if (action === 'rpe') { const d = (ui.drafts[exId] ??= {}); d.rpe = d.rpe === Number(v) ? null : Number(v); render(); }
     else if (action === 'warm') { const d = (ui.drafts[exId] ??= {}); d.warmup = !d.warmup; render(); }
     else if (action === 'register') await registerSet(id, exId);
+    else if (action === 'register-block') await registerBlock(id, exId);
+    else if (action === 'apply-cardio-rec') { for (const f of ['min', 'level', 'incline']) if (el.dataset[f] !== '') changeDraft(exId, f, Number(el.dataset[f])); render(); }
     else if (action === 'apply-rec') { if (el.dataset.kg !== '') changeDraft(exId, 'kg', Number(el.dataset.kg)); if (el.dataset.reps !== '') changeDraft(exId, 'reps', Number(el.dataset.reps)); render(); }
     else if (action === 'open-session') sessionSheet(id);
     else if (action === 'stat-days') { ui.statDays = Number(v); render(); }
@@ -664,6 +761,7 @@ document.addEventListener('change', (e) => {
   const t = e.target;
   if (t.matches?.('[data-draft]')) { changeDraft(t.dataset.ex, t.dataset.draft, Number(t.value) || 0); render(); }
   if (t.id === 'stat-ex') { ui.statEx = t.value; render(); }
+  if (t.id === 'stat-cardio') { ui.statCardio = t.value; render(); }
 });
 document.addEventListener('input', (e) => { if (e.target.id === 'q') { ui.search = e.target.value; render(); } });
 document.addEventListener('submit', async (e) => {

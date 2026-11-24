@@ -27,7 +27,7 @@ export function lastTrained(sessions, exMap) {
   for (const s of done(sessions)) {
     for (const e of s.entries) {
       const ex = exMap.get(e.exerciseId);
-      if (!ex || !workingSets(e).length) continue;
+      if (!ex || ex.kind === 'cardio' || !workingSets(e).length) continue;
       if (!out[ex.primary] || s.date > out[ex.primary]) out[ex.primary] = s.date;
     }
   }

@@ -12,6 +12,7 @@ Estado: implementados salvo la prueba manual en iPhone real. Referencias a prueb
 | R6 | Recomendaciones explicables: subir/bajar peso, más reps, añadir/quitar serie, cambiar de ejercicio, entrenar músculo olvidado, equilibrio, frecuencia. | tests `recommend` |
 | R7 | Sugerencia de entreno del día según músculos más descansados. | e2e |
 | R8 | Datos solo en el dispositivo; exportar/importar JSON con fotos; copias automáticas; migraciones. | tests `store` |
+| R10 | Cardio (cinta, elíptica, bici, spinning, remo, escaladora, comba, andar, natación, HIIT): bloques con minutos, distancia, nivel, inclinación, pulsaciones y esfuerzo dentro del mismo entreno; estadísticas (min/semana, progreso, velocidad media) y consejos (progresión, frecuencia, equilibrio con la fuerza). | tests `cardio`, e2e |
 | R9 | Funciona sin conexión; instalable en iPhone; tema claro/oscuro; objetivo de sesiones/semana configurable. | e2e (SW), manual |
 
 ## Ambigüedades resueltas con valor por defecto

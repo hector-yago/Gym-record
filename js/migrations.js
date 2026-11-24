@@ -6,8 +6,9 @@
 import { isValidKey } from './dates.js';
 import { MUSCLES, EQUIPMENT } from './catalog.js';
 import { sanitizeSet } from './workouts.js';
+import { DEFAULT_CARDIO_TARGET, sanitizeBlock } from './cardio.js';
 
-export const CURRENT_SCHEMA = 1;
+export const CURRENT_SCHEMA = 2;
 export const APP_ID = 'gym-record';
 
 export const DEFAULT_SETTINGS = Object.freeze({
@@ -16,6 +17,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   restSeconds: 90,
   backupReminderDays: 14,
   sound: true,
+  cardioTargetMin: DEFAULT_CARDIO_TARGET, // minutos de cardio por semana (orientativo)
 });
 
 export function emptyDoc() {
@@ -26,6 +28,8 @@ export function emptyDoc() {
 const steps = {
   // 0 → 1: documento sin versión (p. ej. importado a mano). La normalización final hace el trabajo.
   0: (doc) => ({ ...doc, schemaVersion: 1 }),
+  // 1 → 2: cardio. Las entradas ganan `blocks` (vacío por defecto) y los ajustes `cardioTargetMin`; no se pierde nada.
+  1: (doc) => ({ ...doc, schemaVersion: 2 }),
 };
 
 export function migrate(input) {
@@ -49,7 +53,8 @@ const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
 function sanitizeEntry(e) {
   if (!e?.exerciseId) return null;
   const sets = (Array.isArray(e.sets) ? e.sets : []).map(sanitizeSet).filter(Boolean);
-  return { exerciseId: String(e.exerciseId), notes: str(e.notes, 500), sets };
+  const blocks = (Array.isArray(e.blocks) ? e.blocks : []).map(sanitizeBlock).filter(Boolean);
+  return { exerciseId: String(e.exerciseId), notes: str(e.notes, 500), sets, blocks };
 }
 
 export function sanitizeSession(s) {
@@ -139,6 +144,7 @@ export function sanitize(doc) {
   s.restSeconds = Number.isInteger(s.restSeconds) && s.restSeconds >= 10 && s.restSeconds <= 600 ? s.restSeconds : 90;
   s.backupReminderDays = Number.isInteger(s.backupReminderDays) && s.backupReminderDays > 0 ? s.backupReminderDays : 14;
   s.sound = s.sound !== false;
+  s.cardioTargetMin = Number.isInteger(s.cardioTargetMin) && s.cardioTargetMin >= 30 && s.cardioTargetMin <= 1000 ? s.cardioTargetMin : DEFAULT_CARDIO_TARGET;
   const meta = {};
   for (const k of ['lastExport', 'lastAutoBackup']) if (Number.isFinite(doc.meta?.[k])) meta[k] = doc.meta[k];
   return { schemaVersion: CURRENT_SCHEMA, sessions, customExercises, exerciseSettings, bodyweight, settings: s, meta };

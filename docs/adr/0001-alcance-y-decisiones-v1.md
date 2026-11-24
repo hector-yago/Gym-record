@@ -19,4 +19,5 @@ El usuario va al gimnasio ~2 veces por semana (variable) desde hace un par de a�
 ## Consecuencias
 - Frecuencia objetivo configurable (por defecto 2/semana): las recomendaciones de frecuencia usan la media real de 8 semanas.
 - Las fotos no entran en las copias automáticas (pesan); sí en la exportación.
+- El cardio se añadió en la 0.2.0 (ADR 0002).
 - Fuera de v1: rutinas/plantillas, sincronización PC↔iPhone, notificaciones push, unidades en libras, importación desde otras apps.

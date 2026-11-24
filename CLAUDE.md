@@ -9,10 +9,10 @@ PWA personal para iPhone: registro de entrenamientos de gimnasio, estadísticas 
 - `serve.mjs` solo sirve `index.html`, `sw.js`, manifest y `css|js|icons/<fichero>` (un nivel). Cada módulo JS nuevo se añade a `SHELL` en `sw.js`.
 
 ## Reglas de diseño (decisiones en `docs/adr/`)
-- Registro **por sesión libre**: sesión → ejercicios → series `{kg, reps, rpe?, warmup?}`. Una sola sesión activa (`endedAt: null`). Series de calentamiento no cuentan en volumen, récords ni estadísticas.
-- Lógica **pura** (sin DOM ni reloj; «hoy» como clave `YYYY-MM-DD`): `dates`, `workouts`, `stats`, `recommend`, `timer`, `catalog`. La UI (`app.js`, `ui.js`) no calcula reglas.
+- Registro **por sesión libre**: sesión → ejercicios → series `{kg, reps, rpe?, warmup?}`; los ejercicios de **cardio** (`kind: 'cardio'`, `primary: 'cardio'`) guardan `blocks: [{min, km?, level?, incline?, bpm?, rpe?}]` y no usan `sets` (ADR 0002). Una sola sesión activa (`endedAt: null`). Series de calentamiento no cuentan en volumen, récords ni estadísticas.
+- Lógica **pura** (sin DOM ni reloj; «hoy» como clave `YYYY-MM-DD`): `dates`, `workouts`, `cardio`, `stats`, `recommend`, `timer`, `catalog`. El cardio no cuenta como músculo trabajado ni en volumen. La UI (`app.js`, `ui.js`) no calcula reglas.
 - Catálogo (`js/catalog.js`) en código, no en el documento; el usuario guarda solo `exerciseSettings` (apodo, salto de kg, rango de reps, notas, foto) y `customExercises`.
-- Recomendaciones = **reglas locales explicables** (`js/recommend.js`, umbrales en `THRESHOLDS`), sin IA ni red. Toda regla nueva lleva `why` y un test en `tests/recommend.test.mjs`.
+- Recomendaciones = **reglas locales explicables** (`js/recommend.js`, umbrales en `THRESHOLDS`), sin IA ni red. Toda regla nueva lleva `why` y un test (`tests/recommend.test.mjs`, `tests/cardio.test.mjs`).
 - Persistencia: documento JSON único (`js/store.js`, IndexedDB `gym-record`); fotos aparte (`photo:<id>`, data URL ~800 px). **Datos entre versiones: `docs/datos-y-migraciones.md`.** Prohibido cambiar la forma de los datos sin migración + fixture + test.
 - Sin push, sin backend, sin telemetría. Export/import JSON (incluye fotos) + copias automáticas (no incluyen fotos).
 - Tema claro/oscuro con tokens CSS; interfaz en castellano; código en inglés; nombres de músculos «populares» con su nombre técnico entre paréntesis.

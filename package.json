@@ -1,6 +1,6 @@
 {
   "name": "gym-record",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "PWA para iPhone: registro de entrenamientos de gimnasio con catálogo en castellano, estadísticas y recomendaciones. Datos solo en tu dispositivo.",

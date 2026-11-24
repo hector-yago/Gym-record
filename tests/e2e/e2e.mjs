@@ -113,6 +113,26 @@ try {
   await sleep(150);
   await click('[data-ex="jalon-pecho"][data-action=register]');
   await sleep(100);
+
+  // Cardio dentro del mismo entreno: cinta 25 min, 2,5 km, inclinación 2 %
+  await click('[data-action=add-exercise]');
+  await sleep(100);
+  await setVal('#ae-q', 'cinta');
+  await sleep(100);
+  await click('[data-pick=cinta]');
+  await sleep(200);
+  assert.match(await text(), /Cardio · Máquina/);
+  for (let i = 0; i < 1; i++) await click('[data-ex="cinta"][data-f=min][data-d="5"]');
+  await setVal('[data-draft=km][data-ex="cinta"]', '2.5');
+  await sleep(100);
+  await click('[data-ex="cinta"][data-f=incline][data-d="0.5"]');
+  await click('[data-ex="cinta"][data-f=incline][data-d="0.5"]');
+  await click('[data-ex="cinta"][data-action=rpe][data-v="1"]');
+  await click('[data-action=register-block]');
+  await sleep(200);
+  assert.ok((await text()).includes('25 min · 2,5 km · 6 km/h · 1 % incl.'), 'no se ve el bloque de cardio registrado');
+  assert.equal(await evaluate('document.querySelectorAll("[data-action=edit-block]").length'), 1);
+  await shot('03b-cardio');
   await click('[data-action=finish]');
   await sleep(200);
   assert.match(await text(), /Entreno guardado/);
@@ -124,7 +144,7 @@ try {
   await goto(`${base}?hoy=2026-11-25`);
   assert.match(await text(), /Esta semana: 1 de 2/);
   await tab('history');
-  assert.match(await text(), /2 ejercicios · 4 series/);
+  assert.match(await text(), /2 ejercicios · 4 series.*25 min de cardio/);
   await shot('05-historial');
 
   // Semilla de datos ficticios para estadísticas y consejos (mismas fechas relativas al día simulado)
@@ -134,8 +154,8 @@ try {
     const sets = (kg, reps, n, rpe) => Array.from({ length: n }, () => ({ kg, reps, ...(rpe ? { rpe } : {}) }));
     await st.update((d) => {
       d.sessions.push(
-        mk('h1', '2026-11-04', [{ exerciseId: 'press-pecho-maquina', notes: '', sets: sets(35, 10, 3) }, { exerciseId: 'sentadilla-goblet', notes: '', sets: sets(16, 12, 3) }]),
-        mk('h2', '2026-11-11', [{ exerciseId: 'press-pecho-maquina', notes: '', sets: sets(40, 12, 3) }, { exerciseId: 'sentadilla-goblet', notes: '', sets: sets(16, 15, 3) }]),
+        mk('h1', '2026-11-04', [{ exerciseId: 'press-pecho-maquina', notes: '', sets: sets(35, 10, 3) }, { exerciseId: 'sentadilla-goblet', notes: '', sets: sets(16, 12, 3) }, { exerciseId: 'eliptica', notes: '', sets: [], blocks: [{ min: 20, level: 6, rpe: 1 }] }]),
+        mk('h2', '2026-11-11', [{ exerciseId: 'press-pecho-maquina', notes: '', sets: sets(40, 12, 3) }, { exerciseId: 'sentadilla-goblet', notes: '', sets: sets(16, 15, 3) }, { exerciseId: 'eliptica', notes: '', sets: [], blocks: [{ min: 20, level: 6, rpe: 1 }] }]),
         mk('h3', '2026-11-18', [{ exerciseId: 'press-pecho-maquina', notes: '', sets: sets(40, 12, 3) }, { exerciseId: 'extension-triceps-polea', notes: '', sets: sets(20, 12, 3, 1) }]),
       );
       d.bodyweight.push({ date: '2026-11-01', kg: 80.4 }, { date: '2026-11-15', kg: 79.8 });
@@ -144,13 +164,14 @@ try {
   await sleep(200);
   await tab('stats');
   let t = await text();
-  for (const s of ['sesiones/semana', 'Músculos trabajados', 'Progreso por ejercicio', 'Peso corporal']) assert.match(t, new RegExp(s, 'i'), `falta «${s}» en estadísticas`);
+  for (const s of ['sesiones/semana', 'Músculos trabajados', 'Progreso por ejercicio', 'Cardio por semana', 'Progreso de cardio', 'Peso corporal']) assert.match(t, new RegExp(s, 'i'), `falta «${s}» en estadísticas`);
   assert.equal(await evaluate(`!!document.querySelector('svg.mm')`), true);
   await shot('06-estadisticas');
   await tab('advice');
   t = await text();
   assert.match(t, /Sube a 18/i, 'debería recomendar subir la sentadilla goblet (tope de reps)');
   assert.match(t, /Intenta 11 reps con 40 kg/i, 'press de pecho: mismo peso, +1 rep');
+  assert.match(t, /Sube a nivel 7/i, 'elíptica: dos sesiones fáciles → nivel 7');
   assert.match(t, /Entrena/i, 'debería sugerir algún músculo olvidado');
   await shot('07-consejos');
   await tab('train');

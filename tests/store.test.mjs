@@ -21,14 +21,17 @@ test('primer arranque crea el documento y los cambios persisten entre sesiones',
   assert.equal(s2.state.sessions.length, 1);
 });
 
-test('migración: el fixture de la v1 publicada se abre sin perder nada', async () => {
+test('migración: el fixture de la v1 publicada se abre sin perder nada (v1 → v2)', async () => {
   const v1 = fixture('v1.json');
   const adapter = memoryAdapter();
   await adapter.put('doc', v1);
   const s = createStore(adapter);
   const info = await s.load();
-  assert.equal(info.migratedFrom, null);
+  assert.equal(info.migratedFrom, 1, 'la v1 se migra a la actual con copia previa');
+  assert.equal((await s.listBackups()).length, 1);
   assert.equal(s.state.schemaVersion, CURRENT_SCHEMA);
+  assert.deepEqual(s.state.sessions[0].entries[0].blocks, [], 'las entradas antiguas ganan blocks vacío');
+  assert.equal(s.state.settings.cardioTargetMin, 150);
   assert.equal(s.state.sessions.length, 2);
   assert.deepEqual(s.state.sessions[0].entries[0].sets, v1.sessions[0].entries[0].sets);
   assert.equal(s.state.customExercises.length, 1);
@@ -117,4 +120,15 @@ test('recordatorio de copia manual', async () => {
   assert.equal(s.backupDue(), true);
   await s.markExported();
   assert.equal(s.backupDue(), false);
+});
+
+test('fixture v2 (con cardio): se abre tal cual y conserva los bloques', async () => {
+  const v2 = fixture('v2.json');
+  const adapter = memoryAdapter();
+  await adapter.put('doc', v2);
+  const s = createStore(adapter);
+  assert.equal((await s.load()).migratedFrom, null);
+  const cardio = s.state.sessions[0].entries.find((e) => e.exerciseId === 'cinta');
+  assert.deepEqual(cardio.blocks, v2.sessions[0].entries[1].blocks);
+  assert.equal(s.state.settings.cardioTargetMin, 120);
 });

@@ -113,9 +113,31 @@ const RAW = [
   ['buenos-dias', 'Buenos días', 'Good morning', 'lower_back', ['hamstrings', 'glutes'], 'barbell', 2.5, [8, 12], 'Barra a la espalda, inclina el tronco llevando la cadera atrás con la espalda recta.'],
 ];
 
-/** @typedef {{id:string,name:string,alt:string,primary:string,secondary:string[],equipment:string,step:number,reps:[number,number],how:string,custom?:boolean}} Exercise */
+// Cardio: [id, nombre, otros nombres, equipo, métricas opcionales, minutos típicos, cómo se usa]. Métricas: km, level, incline, bpm.
+const CARDIO_RAW = [
+  ['cinta', 'Cinta (andar o correr)', 'Treadmill, tapiz rodante', 'machine', ['km', 'incline', 'bpm'], 20, 'Empieza andando 3-5 min para calentar. Sujeta el cordón de seguridad al cuerpo. Con inclinación subes el esfuerzo sin correr más rápido.'],
+  ['eliptica', 'Elíptica', 'Elliptical, transport', 'machine', ['level', 'km', 'bpm'], 20, 'Pies firmes en los pedales y manos en las asas móviles; zancada fluida sin rebotar. Sube el nivel para más resistencia.'],
+  ['bici-estatica', 'Bicicleta estática', 'Bici, cycling', 'machine', ['level', 'km', 'bpm'], 20, 'Ajusta la altura del sillín (rodilla casi estirada abajo). Cadencia cómoda (~70-90 rpm) y sube el nivel para más resistencia.'],
+  ['bici-spinning', 'Bicicleta de spinning', 'Spinning, ciclo indoor', 'machine', ['level', 'bpm'], 30, 'Rueda de inercia: el freno se aprieta con el mando. Sillín y manillar ajustados antes de empezar; para parar baja la resistencia y frena con el mando.'],
+  ['remo-ergometro', 'Remo (ergómetro)', 'Remo indoor, concept2', 'machine', ['km', 'level', 'bpm'], 15, 'Empuja con las piernas, luego espalda y por último brazos; la vuelta, al revés. Espalda recta. La distancia se apunta en km (500 m = 0,5).'],
+  ['escaladora', 'Escaladora (escaleras)', 'Stairmaster, stepper', 'machine', ['level', 'bpm'], 15, 'Sube sin apoyarte en las barras (solo para equilibrio), cuerpo erguido. El nivel marca la velocidad de los escalones.'],
+  ['comba', 'Comba', 'Saltar a la cuerda', 'other', ['bpm'], 10, 'Saltos pequeños sobre la punta de los pies, muñecas hacen el giro. Mejor en bloques cortos con descanso.'],
+  ['andar-exterior', 'Andar al aire libre', 'Caminar, paseo rápido', 'body', ['km', 'bpm'], 30, 'Paso ligero que permita hablar con dificultad. Apunta distancia si usas el móvil o el reloj.'],
+  ['natacion', 'Natación', 'Piscina', 'other', ['km', 'bpm'], 30, 'Anota el tiempo total de piscina y, si lo sabes, la distancia (50 m = 0,05 km).'],
+  ['hiit', 'Intervalos (HIIT)', 'Circuito de alta intensidad', 'other', ['bpm'], 15, 'Alterna ratos muy intensos con descansos (p. ej. 30 s fuerte / 60 s suave). Total en minutos; esfuerzo «al límite» si acabas exhausto.'],
+];
+
+/** @typedef {{id:string,name:string,alt:string,primary:string,secondary:string[],equipment:string,step:number,reps:[number,number],how:string,kind?:'cardio',metrics?:string[],typicalMin?:number,custom?:boolean}} Exercise */
 /** @type {Exercise[]} */
-export const CATALOG = RAW.map(([id, name, alt, primary, secondary, equipment, step, reps, how]) => ({ id, name, alt, primary, secondary, equipment, step, reps, how }));
+export const CATALOG = [
+  ...RAW.map(([id, name, alt, primary, secondary, equipment, step, reps, how]) => ({ id, name, alt, primary, secondary, equipment, step, reps, how })),
+  ...CARDIO_RAW.map(([id, name, alt, equipment, metrics, typicalMin, how]) => ({ id, name, alt, primary: 'cardio', secondary: [], equipment, step: 0, reps: [1, 1], how, kind: 'cardio', metrics, typicalMin })),
+];
+export const CARDIO_GROUP = 'cardio';
+/** Nombre del grupo (músculo o «Cardio»). */
+export const groupName = (id) => (id === CARDIO_GROUP ? 'Cardio' : MUSCLES[id]?.name ?? id);
+/** Orden de los grupos en listas: músculos en su orden y cardio al final. */
+export const groupOrder = (id) => (id === CARDIO_GROUP ? 99 : MUSCLE_IDS.indexOf(id));
 const BY_ID = new Map(CATALOG.map((e) => [e.id, e]));
 
 export const REP_LIMITS = { min: 1, max: 100 };
@@ -153,6 +175,6 @@ export function searchExercises(list, query, muscle = '') {
     if (e.hidden) return false;
     if (muscle && e.primary !== muscle && !e.secondary.includes(muscle)) return false;
     if (!q) return true;
-    return normalizeText(`${e.name} ${e.alt} ${e.nickname} ${MUSCLES[e.primary]?.name} ${MUSCLES[e.primary]?.hint} ${EQUIPMENT[e.equipment]}`).includes(q);
+    return normalizeText(`${e.name} ${e.alt} ${e.nickname} ${groupName(e.primary)} ${MUSCLES[e.primary]?.hint ?? ''} ${EQUIPMENT[e.equipment]}`).includes(q);
   });
 }
