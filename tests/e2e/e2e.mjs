@@ -93,6 +93,12 @@ try {
   for (let i = 0; i < 8; i++) await click('[data-ex="press-pecho-maquina"][data-f=kg][data-d="5"]');
   await setVal('[data-draft=reps][data-ex="press-pecho-maquina"]', '10');
   await sleep(100);
+  // Calentamiento sugerido para el primer ejercicio pesado (40 kg → 20×8 y 30×5), registrado como calentamiento
+  assert.match(await text(), /Calentamiento · 20×8, 30×5/);
+  await click('[data-action=add-warmup]');
+  await sleep(150);
+  assert.equal(await evaluate(`document.querySelectorAll('.setchip.warm').length`), 2);
+  assert.equal(await evaluate(`!!document.querySelector('#timer-root')`), false, 'el calentamiento no debe arrancar el descanso');
   await click('[data-action=rpe][data-v="2"]');
   await click('[data-action=register]');
   await sleep(400);
@@ -101,7 +107,7 @@ try {
   await click('[data-action=register]');
   await click('[data-action=register]');
   await sleep(150);
-  assert.equal(await evaluate(`document.querySelectorAll('.setchip').length`), 3);
+  assert.equal(await evaluate(`document.querySelectorAll('.setchip').length`), 5, '2 de calentamiento + 3 de trabajo');
   assert.match(await text(), /40×10/);
   await shot('03-sesion-series');
   await click('[data-action=timer-stop]');
@@ -137,8 +143,12 @@ try {
   await sleep(200);
   assert.match(await text(), /Entreno guardado/);
   await shot('04-resumen');
-  await click('[data-ok]');
-  await sleep(100);
+  await click('[data-save]'); // Guardar como rutina
+  await sleep(150);
+  assert.equal(await evaluate(`document.querySelector('#sr-name').value`), 'Día A');
+  await evaluate(`document.querySelector('#sr-form').requestSubmit()`);
+  await sleep(250);
+  assert.match(await text(), /Rutina «Día A» guardada/);
 
   // Persiste tras recargar y aparece en el historial
   await goto(`${base}?hoy=2026-11-25`);
@@ -146,6 +156,54 @@ try {
   await tab('history');
   assert.match(await text(), /2 ejercicios · 4 series.*25 min de cardio/);
   await shot('05-historial');
+
+  // Rutinas: «Día A» guardada desde la sesión; se crea «Día B» desde Más → Rutinas; rotación A → B al hacer A
+  await tab('train');
+  assert.match(await text(), /Toca: Día A/);
+  await tab('more');
+  await click('[data-action=sub][data-v=routines]');
+  await sleep(100);
+  await click('[data-action=new-routine]');
+  await sleep(100);
+  assert.equal(await evaluate(`document.querySelector('#r-name').value`), 'Día B');
+  await click('[data-add]');
+  await sleep(100);
+  await setVal('#ae-q', 'goblet');
+  await sleep(100);
+  await click('[data-pick=sentadilla-goblet]');
+  await sleep(200);
+  assert.match(await text(), /Sentadilla goblet/);
+  await click('[data-save]');
+  await sleep(250);
+  assert.match(await text(), /Día B/);
+  await shot('05b-rutinas');
+  await tab('train');
+  assert.match(await text(), /Toca: Día A/);
+  await click('[data-action=start-routine]'); // la primera tarjeta es la que toca
+  await sleep(250);
+  assert.match(await text(), /Entrenando/);
+
+  // Sustituir «Press de pecho» (hoy no puedo usarlo) por otro de pecho
+  await click('[data-action=entry-menu][data-ex="press-pecho-maquina"]');
+  await sleep(100);
+  await click('[data-act=subst]');
+  await sleep(100);
+  await shot('05c-sustituir');
+  await click('[data-pick=aperturas-mariposa]');
+  await sleep(250);
+  assert.match(await text(), /Aperturas en máquina \(mariposa\)/);
+  assert.doesNotMatch(await text(), /Press de pecho en máquina/);
+  await click('[data-ex="aperturas-mariposa"][data-action=register]');
+  await sleep(100);
+  await click('[data-action=timer-stop]');
+  await click('[data-action=finish]');
+  await sleep(250);
+  assert.match(await text(), /Actualizar «Día A»/);
+  await click('[data-ok]');
+  await sleep(100);
+  await tab('train');
+  assert.match(await text(), /Toca: Día B/);
+  await shot('05d-rotacion');
 
   // Semilla de datos ficticios para estadísticas y consejos (mismas fechas relativas al día simulado)
   await evaluate(`(async () => {
@@ -216,7 +274,9 @@ try {
   // Exportar → contenido válido
   const exported = JSON.parse(await evaluate(`window.__store().exportJson()`));
   assert.equal(exported.app, 'gym-record');
-  assert.equal(exported.data.sessions.length, 4);
+  assert.equal(exported.data.sessions.length, 5);
+  assert.equal(exported.data.routines.length, 2);
+  assert.equal(exported.data.schemaVersion, 3);
 
   // Service worker activo y manifiesto
   const sw = await evaluate(`navigator.serviceWorker.ready.then(r => !!r.active)`);

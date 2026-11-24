@@ -12,7 +12,11 @@ import {
   RPE_LABELS, sanitizeSet, sessionSetCount, sessionVolume, workingSets,
 } from './workouts.js';
 import { avgPerWeek, lastTrained, muscleSets, sessionMinutes, totals, weekStreak, weeklyCounts } from './stats.js';
-import { balanceRecommendation, exerciseRecommendation, frequencyRecommendation, muscleRecommendations, suggestExercises, suggestWorkout } from './recommend.js';
+import {
+  alternativesFor, balanceRecommendation, deloadRecommendation, exerciseRecommendation, frequencyRecommendation, muscleRecommendations, suggestExercises, suggestWorkout, warmupSets,
+} from './recommend.js';
+import { moveItem, newRoutine, nextRoutine, routineFromSession, suggestRoutineName } from './routines.js';
+import { createWakeLock } from './wakelock.js';
 import { muscleMapSvg } from './muscle-map.js';
 import { beep, createTimer, fmtClock, prepareAudio } from './timer.js';
 import { shrinkImage } from './photos.js';
@@ -30,6 +34,7 @@ if (FAKE_OK) window.__setToday = (k) => { fakeToday = k; render(); };
 const ui = { view: 'train', search: '', muscle: '', drafts: {}, statEx: '', statCardio: '', statDays: 7, storageWarning: '', persisted: null, timerEndedAt: 0 };
 let store;
 const timer = createTimer();
+const wake = createWakeLock();
 let cache = { doc: null };
 
 /** Catálogo + ejercicios propios + ajustes, memoizado por versión del documento. */
@@ -55,10 +60,10 @@ async function mutateSession(id, fn) {
   await store.update((d) => { const s = d.sessions.find((x) => x.id === id); if (s) fn(s); });
 }
 
-async function startSession({ exerciseIds = [] } = {}) {
+async function startSession({ exerciseIds = [], routineId = null } = {}) {
   if (activeSession(store.state.sessions)) return;
   ui.drafts = {};
-  const s = newSession(today(), Date.now());
+  const s = newSession(today(), Date.now(), routineId);
   s.entries = exerciseIds.map((exerciseId) => ({ exerciseId, notes: '', sets: [], blocks: [] }));
   await store.update((d) => { d.sessions.push(s); });
   ui.view = 'train';
@@ -106,7 +111,7 @@ async function finishSession(sid) {
 
 /* ---------- vistas ---------- */
 const TABS = [['train', 'Entreno', ICON.train], ['history', 'Historial', ICON.history], ['stats', 'Estadísticas', ICON.stats], ['advice', 'Consejos', ICON.advice], ['more', 'Más', ICON.more]];
-const SUBVIEWS = { exercises: 'Ejercicios', bodyweight: 'Peso corporal', settings: 'Ajustes' };
+const SUBVIEWS = { routines: 'Rutinas', exercises: 'Ejercicios', bodyweight: 'Peso corporal', settings: 'Ajustes' };
 
 function header(title, sub = '', back = false) {
   return `<header class="top">${back ? '<button class="back" data-action="back" aria-label="Volver">‹ Más</button>' : ''}<div class="titles"><h1>${esc(title)}</h1>${sub ? `<div class="sub">${esc(sub)}</div>` : ''}</div></header>`;
@@ -118,7 +123,7 @@ function viewTrain() {
 }
 
 function recKindIcon(kind) {
-  return { raise_weight: ['⬆️', 'up'], lower_weight: ['⬇️', 'down'], more_reps: ['🔁', ''], add_set: ['➕', ''], remove_set: ['➖', 'down'], change_exercise: ['🔄', ''], train_muscle: ['🎯', ''], balance: ['⚖️', ''], frequency: ['📅', ''], cardio_up: ['⬆️', 'up'], cardio_down: ['⬇️', 'down'], cardio_time: ['⏱', ''], cardio_keep: ['👍', ''], cardio_add: ['🏃', ''] }[kind] ?? ['💡', ''];
+  return { raise_weight: ['⬆️', 'up'], lower_weight: ['⬇️', 'down'], more_reps: ['🔁', ''], add_set: ['➕', ''], remove_set: ['➖', 'down'], change_exercise: ['🔄', ''], train_muscle: ['🎯', ''], balance: ['⚖️', ''], frequency: ['📅', ''], cardio_up: ['⬆️', 'up'], cardio_down: ['⬇️', 'down'], cardio_time: ['⏱', ''], cardio_keep: ['👍', ''], cardio_add: ['🏃', ''], deload: ['🛌', ''] }[kind] ?? ['💡', ''];
 }
 function recHtml(r, { link = false } = {}) {
   const [icon, tone] = recKindIcon(r.kind);
@@ -142,7 +147,7 @@ function allRecommendations() {
     if (rec) perExercise.push(rec);
   }
   perExercise.sort((a, b) => b.priority - a.priority);
-  const general = [frequencyRecommendation(avgPerWeek(done, t), store.state.settings.targetPerWeek, done.length), balanceRecommendation(done, map, t), ...cardioGeneralRecommendations(done, t, store.state.settings.cardioTargetMin)].filter(Boolean);
+  const general = [frequencyRecommendation(avgPerWeek(done, t), store.state.settings.targetPerWeek, done.length), balanceRecommendation(done, map, t), deloadRecommendation(done, t), ...cardioGeneralRecommendations(done, t, store.state.settings.cardioTargetMin)].filter(Boolean);
   return { perExercise, muscles: muscleRecommendations(done, list, map, t), general };
 }
 
@@ -158,6 +163,10 @@ function viewHome() {
   const { list, map } = ex();
   const plan = done.length >= 2 ? suggestWorkout(done, list, map, t) : [];
   const planCard = plan.length ? `<section class="group"><h2><span>Sugerencia para hoy</span></h2><div class="card">${plan.map((p) => `<div class="line"><span><b>${esc(musName(p.muscle))}</b><br><small class="hint">${p.days >= 999 ? 'nunca trabajado' : `hace ${p.days} días`} · ${esc(p.exercises.map(displayName).join(', '))}</small></span></div>`).join('')}<div class="actions"><button class="btn small" data-action="start-plan">Empezar con estos ejercicios</button></div></div></section>` : '';
+  const routines = store.state.routines;
+  const nextR = nextRoutine(routines, store.state.sessions);
+  const rNames = (r) => esc(r.exerciseIds.map((id) => exName(id)).slice(0, 4).join(', ') + (r.exerciseIds.length > 4 ? '…' : ''));
+  const routineCard = routines.length ? `<section class="group"><h2><span>Rutinas</span><button class="btn small" data-action="sub" data-v="routines">Gestionar</button></h2><div class="card"><div class="line"><span><b>Toca: ${esc(nextR.name)}</b><br><small class="hint">${rNames(nextR)}</small></span><button class="btn primary small" data-action="start-routine" data-id="${esc(nextR.id)}">Empezar</button></div>${routines.filter((r) => r.id !== nextR.id).map((r) => `<div class="line"><span>${esc(r.name)}<br><small class="hint">${rNames(r)}</small></span><button class="btn small" data-action="start-routine" data-id="${esc(r.id)}">Empezar</button></div>`).join('')}</div></section>` : '';
   const last = done[0];
   const lastCard = last ? `<section class="group"><h2><span>Último entreno</span><span>${esc(agoLabel(last.date, t))}</span></h2><ul class="list"><li class="row"><button class="body" data-action="open-session" data-id="${esc(last.id)}"><span class="title">${esc(summaryTitle(last))}</span><span class="meta">${esc(sessionMeta(last))}</span></button><span class="chev">›</span></li></ul></section>` : '';
   const recs = done.length ? allRecommendations() : null;
@@ -167,7 +176,7 @@ function viewHome() {
   return `${header('Entreno', longDate(t))}${warn}${banner}
     <section class="group"><div class="card"><h3>Esta semana: ${week} de ${target}</h3><div>${dots}</div>${weekCardio ? `<p class="hint">🏃 Cardio: ${weekCardio} de ~${store.state.settings.cardioTargetMin} min</p>` : ''}</div></section>
     <button class="btn primary big block" data-action="start" style="margin-bottom:18px">Empezar entrenamiento</button>
-    ${empty}${planCard}${lastCard}${recCard}`;
+    ${empty}${routineCard}${planCard}${lastCard}${recCard}`;
 }
 
 const summaryTitle = (s) => `${DOW_NAMES[isoDow(s.date)].replace(/^./, (c) => c.toUpperCase())} ${s.date.slice(8)}/${s.date.slice(5, 7)}`;
@@ -224,6 +233,13 @@ function cardioCard(s, entry, e) {
   </article>`;
 }
 
+/** ¿Es el primer ejercicio de fuerza de la sesión y todavía no hay ninguna serie de fuerza registrada? */
+function isFirstHeavy(session, entry) {
+  const { map } = ex();
+  const strength = session.entries.filter((en) => !isCardio(map.get(en.exerciseId)));
+  return strength[0] === entry && strength.every((en) => en.sets.length === 0);
+}
+
 function entryCard(s, entry) {
   const { list, map } = ex();
   const e = map.get(entry.exerciseId) ?? { id: entry.exerciseId, name: 'Ejercicio desconocido', primary: '', secondary: [], reps: [8, 12], step: 2.5, equipment: 'other' };
@@ -236,11 +252,14 @@ function entryCard(s, entry) {
   const chips = entry.sets.map((st, i) => `<button class="setchip${st.warmup ? ' warm' : ''}" data-action="edit-set" data-id="${esc(s.id)}" data-ex="${esc(e.id)}" data-i="${i}" aria-label="Serie ${i + 1}: editar">${st.warmup ? '🔥 ' : ''}${st.kg > 0 ? `${fmtKg(st.kg)}×${st.reps}` : `${st.reps}`}${st.rpe ? ` <small>${['', '😌', '👌', '🥵'][st.rpe]}</small>` : ''}</button>`).join('');
   const suggest = rec && !entry.sets.length ? `<button class="suggest" data-action="apply-rec" data-ex="${esc(e.id)}" data-kg="${rec.target?.kg ?? ''}" data-reps="${rec.target?.reps ?? ''}"><b>${esc(rec.title)}</b> · ${esc(rec.detail)}${rec.target ? ' <u>Aplicar</u>' : ''}</button>` : '';
   const kgUnit = e.equipment === 'body' && e.step === 0 ? 'kg extra' : 'kg';
+  const wu = isFirstHeavy(s, entry) ? warmupSets(draft.kg, e.step) : [];
+  const warmupHtml = wu.length ? `<button class="suggest" data-action="add-warmup" data-id="${esc(s.id)}" data-ex="${esc(e.id)}"><b>Calentamiento</b> · ${esc(wu.map((x) => `${fmtKg(x.kg)}×${x.reps}`).join(', '))} <u>Añadir</u></button>` : '';
   return `<article class="entry" data-ex="${esc(e.id)}">
     <div class="entry-head"><div class="t"><b>${esc(displayName(e))}</b><small>${esc(musName(e.primary))} · ${esc(EQUIPMENT[e.equipment] ?? '')}</small></div><button class="more" data-action="entry-menu" data-id="${esc(s.id)}" data-ex="${esc(e.id)}" aria-label="Más acciones">⋯</button></div>
     ${last ? `<p class="hint">Última vez (${esc(agoLabel(last.date, today()))}): ${esc(describeSets(last.sets))}</p>` : '<p class="hint">Primera vez que lo haces: empieza ligero.</p>'}
     ${entry.notes ? `<p class="hint">📝 ${esc(entry.notes)}</p>` : ''}
     ${suggest}
+    ${warmupHtml}
     ${chips ? `<div class="sets">${chips}</div>` : ''}
     <div class="draft">${stepper(e.id, 'kg', draft.kg, kgUnit, kgStepOf(e))}${stepper(e.id, 'reps', draft.reps, repUnit(e), repStepOf(e))}</div>
     <div class="rpe" role="group" aria-label="Esfuerzo (opcional)">${[1, 2, 3].map((v) => `<button type="button" data-action="rpe" data-ex="${esc(e.id)}" data-v="${v}" aria-pressed="${draft.rpe === v}">${['', '😌', '👌', '🥵'][v]} ${RPE_LABELS[v]}</button>`).join('')}<button type="button" class="warm" data-action="warm" data-ex="${esc(e.id)}" aria-pressed="${draft.warmup}">🔥 Calent.</button></div>
@@ -336,6 +355,7 @@ function viewMore() {
   const item = (id, title, meta) => `<li class="row"><button class="body" data-action="sub" data-v="${id}"><span class="title">${title}</span><span class="meta">${meta}</span></button><span class="chev">›</span></li>`;
   const bw = store.state.bodyweight.at(-1);
   return `${header('Más')}<ul class="list">
+    ${item('routines', 'Rutinas', store.state.routines.length ? `${store.state.routines.length} guardadas: ${esc(store.state.routines.map((r) => r.name).join(', '))}` : 'Crea «Día A», «Día B»… y empieza un entreno con un toque')}
     ${item('exercises', 'Ejercicios', `Catálogo de ${CATALOG.length} (fuerza y cardio) + los tuyos: cómo se usa, foto y apodo`)}
     ${item('bodyweight', 'Peso corporal', bw ? `Último: ${fmtKg(bw.kg)} kg (${esc(fmtDate(bw.date))})` : 'Registra tu peso')}
     ${item('settings', 'Ajustes', 'Tema, descanso, objetivo semanal, copias')}</ul><p class="hint" style="text-align:center;margin-top:18px">Gym Record ${VERSION}</p>`;
@@ -369,6 +389,7 @@ function viewSettings() {
       ${seg('Objetivo semanal', 'targetPerWeek', [1, 2, 3, 4, 5].map((n) => [n, n]))}
       ${seg('Descanso entre series', 'restSeconds', [[60, '1:00'], [90, '1:30'], [120, '2:00'], [180, '3:00']])}
       ${seg('Sonido del temporizador', 'sound', [[true, 'Sí'], [false, 'No']])}
+      ${seg('Pantalla encendida en el entreno', 'keepAwake', [[true, 'Sí'], [false, 'No']])}
       ${seg('Cardio orientativo (min/semana)', 'cardioTargetMin', [[60, '60'], [90, '90'], [120, '120'], [150, '150'], [200, '200']])}
       <p>En iPhone el pitido solo suena con la app abierta y sin el interruptor de silencio; la vibración no está disponible en iOS.</p></div>
     <div class="card"><h3>Apariencia</h3>${seg('Tema', 'theme', [['system', 'Sistema'], ['light', 'Claro'], ['dark', 'Oscuro']])}</div>
@@ -381,7 +402,7 @@ function viewSettings() {
 function render() {
   if (!store) return;
   const y = window.scrollY;
-  const views = { train: viewTrain, history: viewHistory, stats: viewStats, advice: viewAdvice, more: viewMore, exercises: viewExercises, bodyweight: viewBodyweight, settings: viewSettings };
+  const views = { train: viewTrain, history: viewHistory, stats: viewStats, advice: viewAdvice, more: viewMore, routines: viewRoutines, exercises: viewExercises, bodyweight: viewBodyweight, settings: viewSettings };
   const tab = SUBVIEWS[ui.view] ? 'more' : ui.view;
   const focusId = document.activeElement?.id;
   $('#app').innerHTML = `${views[ui.view]()}
@@ -389,6 +410,13 @@ function render() {
   if (focusId === 'q') { const q = $('#q'); q?.focus(); q?.setSelectionRange(q.value.length, q.value.length); }
   window.scrollTo(0, y);
   applyTheme();
+  syncWake();
+}
+
+/** Pantalla encendida solo mientras hay una sesión activa (y el ajuste lo permite). */
+function syncWake() {
+  if (activeSession(store.state.sessions) && store.state.settings.keepAwake) wake.acquire();
+  else wake.release();
 }
 
 function applyTheme() {
@@ -421,9 +449,32 @@ function tick() {
 }
 
 /* ---------- hojas ---------- */
+function saveRoutineSheet(session) {
+  openSheet(`<h2>Guardar como rutina</h2><p class="hint">${esc(session.entries.map((e) => exName(e.exerciseId)).join(', '))}</p><form id="sr-form"><div class="field"><label for="sr-name">Nombre</label><input id="sr-name" type="text" maxlength="60" value="${esc(suggestRoutineName(store.state.routines))}" required autofocus /></div><div class="actions"><button class="btn primary grow" type="submit">Guardar</button><button class="btn" type="button" data-close>Cancelar</button></div></form>`, (sh) => {
+    $('[data-close]', sh).addEventListener('click', closeSheet);
+    $('#sr-form', sh).addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const r = routineFromSession(session, $('#sr-name', sh).value);
+      if (!r) return toast('Pon un nombre.');
+      await store.update((d) => { d.routines.push(r); });
+      closeSheet();
+      toast(`Rutina «${r.name}» guardada.`);
+    });
+  });
+}
+
 function summarySheet(s, recs) {
+  const routine = s.routineId ? store.state.routines.find((r) => r.id === s.routineId) : null;
   const prs = recs.map((r) => `<li>🏆 <b>${esc(exName(r.exerciseId))}</b>: ${r.kind === 'peso' ? `nuevo peso máximo ${fmtKg(r.value)} kg (antes ${fmtKg(r.previous)})` : `1RM estimado ${fmtNum(r.value, 1)} kg (antes ${fmtNum(r.previous, 1)})`}</li>`).join('');
-  openSheet(`<h2>¡Entreno guardado! 💪</h2><p>${esc(sessionMeta(s))}</p>${prs ? `<ul style="padding-left:18px">${prs}</ul>` : '<p class="hint">Sin récords esta vez; la constancia también cuenta.</p>'}<div class="actions"><button class="btn primary grow" data-ok>Cerrar</button></div>`, (sh) => $('[data-ok]', sh).addEventListener('click', closeSheet));
+  openSheet(`<h2>¡Entreno guardado! 💪</h2><p>${esc(sessionMeta(s))}</p>${prs ? `<ul style="padding-left:18px">${prs}</ul>` : '<p class="hint">Sin récords esta vez; la constancia también cuenta.</p>'}<div class="actions"><button class="btn primary grow" data-ok>Cerrar</button><button class="btn" data-save>Guardar como rutina</button>${routine ? `<button class="btn" data-upd>Actualizar «${esc(routine.name)}»</button>` : ''}</div>`, (sh) => {
+    $('[data-ok]', sh).addEventListener('click', closeSheet);
+    $('[data-save]', sh).addEventListener('click', () => saveRoutineSheet(s));
+    $('[data-upd]', sh)?.addEventListener('click', async () => {
+      await store.update((d) => { const r = d.routines.find((x) => x.id === routine.id); if (r) r.exerciseIds = [...new Set(s.entries.map((e) => e.exerciseId))]; });
+      closeSheet();
+      toast(`«${routine.name}» actualizada.`);
+    });
+  });
 }
 
 function sessionSheet(id) {
@@ -460,13 +511,13 @@ function detailsSheet(id) {
   });
 }
 
-function addExerciseSheet(sid) {
+function addExerciseSheet(sid, opts = {}) {
   const state = { q: '', muscle: '' };
   const sh = openSheet('<div id="ae"></div>');
   const draw = () => {
     const { list } = ex();
     const s = store.state.sessions.find((x) => x.id === sid);
-    const inSession = new Set(s?.entries.map((e) => e.exerciseId));
+    const inSession = opts.addedIds ? opts.addedIds() : new Set(s?.entries.map((e) => e.exerciseId));
     const used = new Map();
     for (const x of store.state.sessions) for (const e of x.entries) used.set(e.exerciseId, (used.get(e.exerciseId) ?? 0) + 1);
     let found = searchExercises(list, state.q, state.muscle);
@@ -483,11 +534,11 @@ function addExerciseSheet(sid) {
     const m = e.target.closest('[data-m]');
     if (m) { state.muscle = m.dataset.m; return draw(); }
     const pick = e.target.closest('[data-pick]')?.dataset.pick;
-    if (pick) { await addExercise(sid, pick); closeSheet(); return; }
+    if (pick) { closeSheet(); if (opts.onPick) await opts.onPick(pick); else await addExercise(sid, pick); return; }
     const info = e.target.closest('[data-info]')?.dataset.info;
-    if (info) return exerciseSheet(info, () => addExerciseSheet(sid));
-    if (e.target.closest('[data-new]')) return customExerciseSheet(null, async (id) => { await addExercise(sid, id); });
-    if (e.target.closest('[data-close]')) closeSheet();
+    if (info) return exerciseSheet(info, () => addExerciseSheet(sid, opts));
+    if (e.target.closest('[data-new]')) return customExerciseSheet(null, async (id) => { if (opts.onPick) await opts.onPick(id); else await addExercise(sid, id); });
+    if (e.target.closest('[data-close]')) { closeSheet(); opts.onClose?.(); }
   });
   draw();
 }
@@ -498,13 +549,14 @@ function entryMenuSheet(sid, exId) {
   if (!entry) return;
   const i = s.entries.indexOf(entry);
   openSheet(`<h2>${esc(exName(exId))}</h2><div class="actions" style="flex-direction:column">
-    <button class="btn" data-act="info">Cómo se hace / músculos</button><button class="btn" data-act="notes">Nota del ejercicio</button>
+    <button class="btn" data-act="info">Cómo se hace / músculos</button><button class="btn" data-act="subst">Hoy no puedo usarlo (sustituir)</button><button class="btn" data-act="notes">Nota del ejercicio</button>
     ${i > 0 ? '<button class="btn" data-act="up">Subir en la lista</button>' : ''}
     <button class="btn danger" data-act="remove">Quitar de la sesión</button><button class="btn" data-act="close">Cerrar</button></div>`, (sh) => {
     sh.addEventListener('click', async (e) => {
       const act = e.target.closest('[data-act]')?.dataset.act;
       if (act === 'close') closeSheet();
       if (act === 'info') exerciseSheet(exId);
+      if (act === 'subst') substituteSheet(sid, exId);
       if (act === 'up') { await mutateSession(sid, (x) => { const k = x.entries.findIndex((y) => y.exerciseId === exId); if (k > 0) [x.entries[k - 1], x.entries[k]] = [x.entries[k], x.entries[k - 1]]; }); closeSheet(); }
       if (act === 'remove') confirmSheet('¿Quitar el ejercicio?', entry.sets.length || entry.blocks?.length ? `Se perderán sus ${entry.sets.length + (entry.blocks?.length ?? 0)} registros de esta sesión.` : 'No tiene nada registrado.', 'Quitar', async () => { await mutateSession(sid, (x) => { x.entries = x.entries.filter((y) => y.exerciseId !== exId); }); delete ui.drafts[exId]; });
       if (act === 'notes') {
@@ -515,6 +567,85 @@ function entryMenuSheet(sid, exId) {
       }
     });
   });
+}
+
+function substituteSheet(sid, exId) {
+  const { list, map } = ex();
+  const e = map.get(exId);
+  const s = store.state.sessions.find((x) => x.id === sid);
+  const entry = s?.entries.find((en) => en.exerciseId === exId);
+  if (!e || !entry) return;
+  const used = new Map();
+  for (const x of store.state.sessions) for (const en of x.entries) used.set(en.exerciseId, (used.get(en.exerciseId) ?? 0) + 1);
+  const alts = alternativesFor(e, list, used, 12).filter((a) => !s.entries.some((en) => en.exerciseId === a.id));
+  const hasData = entry.sets.length > 0 || (entry.blocks?.length ?? 0) > 0;
+  openSheet(`<h2>Sustituir: ${esc(displayName(e))}</h2><p class="hint">Mismo músculo (${esc(musName(e.primary))}). ${hasData ? 'Ya tiene registros: el sustituto se añade debajo y no se pierde nada.' : 'Se reemplaza por el que elijas.'}</p>
+    <ul class="list">${alts.map((a) => `<li class="row"><button class="body" data-pick="${esc(a.id)}"><span class="title">${esc(displayName(a))}${used.get(a.id) ? '<span class="tag ok">usado</span>' : ''}</span><span class="meta">${esc(EQUIPMENT[a.equipment])}${a.alt && !a.nickname ? ` · ${esc(a.alt)}` : ''}</span></button></li>`).join('') || '<li class="row"><span class="meta">No hay alternativas en el catálogo.</span></li>'}</ul>
+    <div class="actions"><button class="btn" data-close>Cancelar</button></div>`, (sh) => {
+    $('[data-close]', sh).addEventListener('click', closeSheet);
+    sh.addEventListener('click', async (ev) => {
+      const id = ev.target.closest('[data-pick]')?.dataset.pick;
+      if (!id) return;
+      await mutateSession(sid, (x) => {
+        const i = x.entries.findIndex((en) => en.exerciseId === exId);
+        if (i < 0) return;
+        if (hasData) x.entries.splice(i + 1, 0, { exerciseId: id, notes: '', sets: [], blocks: [] });
+        else x.entries[i] = { ...x.entries[i], exerciseId: id };
+      });
+      delete ui.drafts[exId];
+      closeSheet();
+      toast(hasData ? 'Sustituto añadido debajo.' : 'Ejercicio sustituido.');
+    });
+  });
+}
+
+function viewRoutines() {
+  const rows = store.state.routines.map((r) => `<li class="row"><button class="body" data-action="edit-routine" data-id="${esc(r.id)}"><span class="title">${esc(r.name)}</span><span class="meta">${r.exerciseIds.length} ejercicios · ${esc(r.exerciseIds.map((id) => exName(id)).slice(0, 4).join(', '))}${r.exerciseIds.length > 4 ? '…' : ''}</span></button><span class="chev">›</span></li>`).join('');
+  return `${header('Rutinas', 'Plantillas para empezar rápido', true)}
+    <ul class="list">${rows || '<li class="row"><span class="meta">Aún no hay rutinas. Crea una o guarda un entreno como rutina al terminarlo.</span></li>'}</ul>
+    <button class="btn block" data-action="new-routine" style="margin-top:14px">+ Nueva rutina</button>
+    <p class="hint">En Inicio verás «Toca: …»: la rutina siguiente a la última que hiciste, por orden de creación (A → B → A…).</p>`;
+}
+
+/** Editor de rutina. `draft` conserva lo editado al ir a elegir ejercicios. */
+function routineSheet(id, draft) {
+  const cur = id ? store.state.routines.find((r) => r.id === id) : null;
+  if (id && !cur) return;
+  const d = draft ?? { name: cur?.name ?? suggestRoutineName(store.state.routines), ids: [...(cur?.exerciseIds ?? [])] };
+  const sh = openSheet('<div id="rs"></div>');
+  const draw = () => {
+    $('#rs', sh).innerHTML = `<h2>${cur ? 'Editar rutina' : 'Nueva rutina'}</h2><div class="field"><label for="r-name">Nombre</label><input id="r-name" type="text" maxlength="60" value="${esc(d.name)}" /></div>
+      <ul class="list">${d.ids.map((eid, i) => `<li class="row"><span class="body"><span class="title">${esc(exName(eid))}</span><span class="meta">${esc(musName(ex().map.get(eid)?.primary ?? ''))}</span></span><button class="more" data-up="${i}" aria-label="Subir" ${i === 0 ? 'disabled' : ''}>↑</button><button class="more" data-down="${i}" aria-label="Bajar" ${i === d.ids.length - 1 ? 'disabled' : ''}>↓</button><button class="more" data-rm="${i}" aria-label="Quitar">✕</button></li>`).join('') || '<li class="row"><span class="meta">Sin ejercicios todavía.</span></li>'}</ul>
+      <button class="btn block" data-add style="margin:10px 0">+ Añadir ejercicio</button>
+      <div class="actions"><button class="btn primary grow" data-save>Guardar</button>${cur ? '<button class="btn danger" data-del>Borrar</button>' : ''}<button class="btn" data-close>Cancelar</button></div>`;
+  };
+  const keepName = () => { const n = $('#r-name', sh); if (n) d.name = n.value; };
+  sh.addEventListener('click', async (e) => {
+    const t = e.target.closest('button');
+    if (!t) return;
+    if (t.dataset.up !== undefined) { keepName(); d.ids = moveItem(d.ids, Number(t.dataset.up), -1); draw(); }
+    else if (t.dataset.down !== undefined) { keepName(); d.ids = moveItem(d.ids, Number(t.dataset.down), 1); draw(); }
+    else if (t.dataset.rm !== undefined) { keepName(); d.ids.splice(Number(t.dataset.rm), 1); draw(); }
+    else if (t.dataset.add !== undefined) {
+      keepName();
+      closeSheet();
+      addExerciseSheet(null, { addedIds: () => new Set(d.ids), onPick: async (exId) => { if (!d.ids.includes(exId)) d.ids.push(exId); routineSheet(id, d); }, onClose: () => routineSheet(id, d) });
+    } else if (t.dataset.close !== undefined) closeSheet();
+    else if (t.dataset.del !== undefined) confirmSheet('¿Borrar la rutina?', 'Los entrenos ya hechos no se tocan.', 'Borrar', async () => { await store.update((x) => { x.routines = x.routines.filter((r) => r.id !== id); }); });
+    else if (t.dataset.save !== undefined) {
+      keepName();
+      const r = newRoutine(d.name, d.ids);
+      if (!r) return toast('Pon un nombre.');
+      if (!r.exerciseIds.length) return toast('Añade al menos un ejercicio.');
+      await store.update((x) => {
+        if (cur) { const i = x.routines.findIndex((y) => y.id === id); if (i >= 0) x.routines[i] = { ...x.routines[i], name: r.name, exerciseIds: r.exerciseIds }; }
+        else x.routines.push(r);
+      });
+      closeSheet();
+      toast('Rutina guardada.');
+    }
+  });
+  draw();
 }
 
 function editSetSheet(sid, exId, index) {
@@ -738,6 +869,17 @@ document.addEventListener('click', async (e) => {
     else if (action === 'warm') { const d = (ui.drafts[exId] ??= {}); d.warmup = !d.warmup; render(); }
     else if (action === 'register') await registerSet(id, exId);
     else if (action === 'register-block') await registerBlock(id, exId);
+    else if (action === 'start-routine') {
+      const r = store.state.routines.find((x) => x.id === id);
+      if (r) await startSession({ exerciseIds: r.exerciseIds.filter((x) => ex().map.has(x)), routineId: r.id });
+    }
+    else if (action === 'new-routine') routineSheet(null);
+    else if (action === 'edit-routine') routineSheet(id);
+    else if (action === 'add-warmup') {
+      const e = ex().map.get(exId);
+      const sets = warmupSets(ui.drafts[exId]?.kg ?? 0, e?.step ?? 0);
+      if (sets.length) await mutateSession(id, (x) => x.entries.find((en) => en.exerciseId === exId)?.sets.push(...sets));
+    }
     else if (action === 'apply-cardio-rec') { for (const f of ['min', 'level', 'incline']) if (el.dataset[f] !== '') changeDraft(exId, f, Number(el.dataset[f])); render(); }
     else if (action === 'apply-rec') { if (el.dataset.kg !== '') changeDraft(exId, 'kg', Number(el.dataset.kg)); if (el.dataset.reps !== '') changeDraft(exId, 'reps', Number(el.dataset.reps)); render(); }
     else if (action === 'open-session') sessionSheet(id);
@@ -804,7 +946,7 @@ async function boot() {
   render();
   store.autoBackup().catch(() => {});
   setInterval(tick, 250);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) { render(); tick(); } });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) { render(); tick(); wake.reacquire(); } });
   scheduleMidnight();
   if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
 }

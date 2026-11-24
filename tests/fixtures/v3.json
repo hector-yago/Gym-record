@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 3,
+  "sessions": [
+    { "id": "s1", "date": "2026-11-24", "startedAt": 1795000000000, "endedAt": 1795003600000, "notes": "", "routineId": "routine-a",
+      "entries": [
+        { "exerciseId": "press-pecho-maquina", "notes": "", "sets": [ { "kg": 40, "reps": 10, "rpe": 2 } ], "blocks": [] }
+      ] }
+  ],
+  "routines": [
+    { "id": "routine-a", "name": "Día A", "exerciseIds": ["press-pecho-maquina", "jalon-pecho"], "createdAt": 1794000000000 },
+    { "id": "routine-b", "name": "Día B", "exerciseIds": ["prensa", "curl-femoral-sentado"], "createdAt": 1794000001000 }
+  ],
+  "customExercises": [],
+  "exerciseSettings": {},
+  "bodyweight": [],
+  "settings": { "theme": "system", "targetPerWeek": 2, "restSeconds": 90, "backupReminderDays": 14, "sound": true, "cardioTargetMin": 150, "keepAwake": false },
+  "meta": {}
+}

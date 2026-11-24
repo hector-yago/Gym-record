@@ -73,3 +73,56 @@ test('músculos olvidados: sugiere el que lleva más tiempo sin entrenarse', () 
   assert.equal(recs.find((r) => r.muscle === 'lats'), undefined);
   assert.equal(balanceRecommendation(sessions, map, T), null);
 });
+
+/* ---- 0.3.0: aproximación, descarga y sustituciones ---- */
+import { alternativesFor, deloadRecommendation, warmupSets } from '../js/recommend.js';
+
+test('series de aproximación: 50 % × 8 y 70 % × 5 redondeadas al salto; nada por debajo de 20 kg o sin salto', () => {
+  assert.deepEqual(warmupSets(60, 5), [{ kg: 30, reps: 8, warmup: true }, { kg: 40, reps: 5, warmup: true }]);
+  assert.deepEqual(warmupSets(50, 2.5), [{ kg: 25, reps: 8, warmup: true }, { kg: 35, reps: 5, warmup: true }]);
+  assert.deepEqual(warmupSets(22, 5), [{ kg: 10, reps: 8, warmup: true }, { kg: 15, reps: 5, warmup: true }]);
+  assert.deepEqual(warmupSets(19, 5), []);
+  assert.deepEqual(warmupSets(60, 0), []);
+  for (const s of warmupSets(20, 10)) assert.ok(s.kg < 20);
+});
+
+// Historial semanal de volumen: 1 sesión por semana en los lunes indicados, 3×10 a `kg`
+const weekly = (mondays, kgOf = () => 40) => mondays.map((d, i) => ({
+  id: `w${i}`, date: d, startedAt: i + 1, endedAt: i + 2, notes: '',
+  entries: [{ exerciseId: 'x', notes: '', sets: Array.from({ length: 3 }, () => ({ kg: kgOf(i), reps: 10 })), blocks: [] }],
+}));
+const MONDAYS = ['2026-09-07', '2026-09-14', '2026-09-21', '2026-09-28', '2026-10-05', '2026-10-12', '2026-10-19', '2026-10-26', '2026-11-02', '2026-11-09', '2026-11-16'];
+const TODAY = '2026-11-24'; // martes de la semana en curso (23/11), sin sesión aún
+
+test('descarga: 6+ semanas seguidas con carga normal → la recomienda', () => {
+  const r = deloadRecommendation(weekly(MONDAYS), TODAY);
+  assert.equal(r.kind, 'deload');
+  assert.match(r.detail, /11 semanas|\d+ semanas seguidas/);
+});
+
+test('descarga: una semana ligera o un parón reciente reinicia la cuenta', () => {
+  const light = deloadRecommendation(weekly(MONDAYS, (i) => (i === 8 ? 10 : 40)), TODAY); // 02/11 ligera → quedan 2 semanas
+  assert.equal(light, null);
+  const gap = deloadRecommendation(weekly(MONDAYS.filter((d) => d !== '2026-11-02')), TODAY); // semana sin entrenar
+  assert.equal(gap, null);
+});
+
+test('descarga: sin historia suficiente no aconseja', () => {
+  assert.equal(deloadRecommendation(weekly(MONDAYS.slice(-5)), TODAY), null, 'menos de 8 sesiones');
+  assert.equal(deloadRecommendation([], TODAY), null);
+});
+
+test('sustituciones: mismo músculo y tipo, primero los usados y luego mismo equipo', () => {
+  const list = resolveExercises({});
+  const press = list.find((e) => e.id === 'press-pecho-maquina');
+  const used = new Map([['aperturas-mariposa', 3]]);
+  const alts = alternativesFor(press, list, used);
+  assert.ok(alts.length > 0);
+  assert.ok(alts.every((e) => e.primary === 'chest' && e.id !== press.id && e.kind !== 'cardio'));
+  assert.equal(alts[0].id, 'aperturas-mariposa', 'el ya usado va primero');
+  const sameEquipment = alts.filter((e) => !used.has(e.id) && e.equipment === 'machine');
+  assert.ok(alts.indexOf(sameEquipment[0]) < alts.findIndex((e) => e.equipment === 'dumbbell'), 'mismo equipo antes que otros');
+
+  const cinta = list.find((e) => e.id === 'cinta');
+  assert.ok(alternativesFor(cinta, list).every((e) => e.kind === 'cardio'), 'el cardio solo se sustituye por cardio');
+});

@@ -7,8 +7,9 @@ import { isValidKey } from './dates.js';
 import { MUSCLES, EQUIPMENT } from './catalog.js';
 import { sanitizeSet } from './workouts.js';
 import { DEFAULT_CARDIO_TARGET, sanitizeBlock } from './cardio.js';
+import { sanitizeRoutine } from './routines.js';
 
-export const CURRENT_SCHEMA = 2;
+export const CURRENT_SCHEMA = 3;
 export const APP_ID = 'gym-record';
 
 export const DEFAULT_SETTINGS = Object.freeze({
@@ -18,10 +19,11 @@ export const DEFAULT_SETTINGS = Object.freeze({
   backupReminderDays: 14,
   sound: true,
   cardioTargetMin: DEFAULT_CARDIO_TARGET, // minutos de cardio por semana (orientativo)
+  keepAwake: true, // mantener la pantalla encendida durante el entreno
 });
 
 export function emptyDoc() {
-  return { schemaVersion: CURRENT_SCHEMA, sessions: [], customExercises: [], exerciseSettings: {}, bodyweight: [], settings: { ...DEFAULT_SETTINGS }, meta: {} };
+  return { schemaVersion: CURRENT_SCHEMA, sessions: [], routines: [], customExercises: [], exerciseSettings: {}, bodyweight: [], settings: { ...DEFAULT_SETTINGS }, meta: {} };
 }
 
 // Cada clave N convierte un documento de versión N en versión N+1.
@@ -30,6 +32,8 @@ const steps = {
   0: (doc) => ({ ...doc, schemaVersion: 1 }),
   // 1 → 2: cardio. Las entradas ganan `blocks` (vacío por defecto) y los ajustes `cardioTargetMin`; no se pierde nada.
   1: (doc) => ({ ...doc, schemaVersion: 2 }),
+  // 2 → 3: rutinas. Se añade `routines` (vacío), las sesiones pueden llevar `routineId` y los ajustes `keepAwake`; no se pierde nada.
+  2: (doc) => ({ ...doc, schemaVersion: 3 }),
 };
 
 export function migrate(input) {
@@ -67,6 +71,7 @@ export function sanitizeSession(s) {
     startedAt,
     endedAt,
     notes: str(s.notes, 1000),
+    ...(s.routineId ? { routineId: String(s.routineId) } : {}),
     entries: (Array.isArray(s.entries) ? s.entries : []).map(sanitizeEntry).filter(Boolean),
   };
 }
@@ -116,6 +121,15 @@ export function sanitize(doc) {
   const active = sessions.filter((s) => !s.endedAt).sort((a, b) => b.startedAt - a.startedAt);
   for (const s of active.slice(1)) s.endedAt = s.startedAt;
 
+  const routineSeen = new Set();
+  const routines = [];
+  for (const r of Array.isArray(doc.routines) ? doc.routines : []) {
+    const c = sanitizeRoutine(r);
+    if (!c || routineSeen.has(c.id)) continue;
+    routineSeen.add(c.id);
+    routines.push(c);
+  }
+
   const customSeen = new Set();
   const customExercises = [];
   for (const e of Array.isArray(doc.customExercises) ? doc.customExercises : []) {
@@ -144,8 +158,9 @@ export function sanitize(doc) {
   s.restSeconds = Number.isInteger(s.restSeconds) && s.restSeconds >= 10 && s.restSeconds <= 600 ? s.restSeconds : 90;
   s.backupReminderDays = Number.isInteger(s.backupReminderDays) && s.backupReminderDays > 0 ? s.backupReminderDays : 14;
   s.sound = s.sound !== false;
+  s.keepAwake = s.keepAwake !== false;
   s.cardioTargetMin = Number.isInteger(s.cardioTargetMin) && s.cardioTargetMin >= 30 && s.cardioTargetMin <= 1000 ? s.cardioTargetMin : DEFAULT_CARDIO_TARGET;
   const meta = {};
   for (const k of ['lastExport', 'lastAutoBackup']) if (Number.isFinite(doc.meta?.[k])) meta[k] = doc.meta[k];
-  return { schemaVersion: CURRENT_SCHEMA, sessions, customExercises, exerciseSettings, bodyweight, settings: s, meta };
+  return { schemaVersion: CURRENT_SCHEMA, sessions, routines, customExercises, exerciseSettings, bodyweight, settings: s, meta };
 }

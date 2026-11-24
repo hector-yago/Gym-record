@@ -1,5 +1,5 @@
 // Service worker: la app funciona sin conexión. Red primero (siempre la última versión si hay conexión) y caché de respaldo.
-const VERSION = '0.2.0'; // sincronizado por tools/sync-version.mjs
+const VERSION = '0.3.0'; // sincronizado por tools/sync-version.mjs
 const CACHE = `gym-record-${VERSION}`;
 const SHELL = [
   './',
@@ -13,11 +13,13 @@ const SHELL = [
   'js/muscle-map.js',
   'js/photos.js',
   'js/recommend.js',
+  'js/routines.js',
   'js/stats.js',
   'js/store.js',
   'js/timer.js',
   'js/ui.js',
   'js/version.js',
+  'js/wakelock.js',
   'js/workouts.js',
   'manifest.webmanifest',
   'icons/icon.svg',

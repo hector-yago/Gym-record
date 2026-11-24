@@ -122,13 +122,40 @@ test('recordatorio de copia manual', async () => {
   assert.equal(s.backupDue(), false);
 });
 
-test('fixture v2 (con cardio): se abre tal cual y conserva los bloques', async () => {
+test('fixture v2 (con cardio): se migra a la v3 con copia previa y conserva los bloques', async () => {
   const v2 = fixture('v2.json');
   const adapter = memoryAdapter();
   await adapter.put('doc', v2);
   const s = createStore(adapter);
-  assert.equal((await s.load()).migratedFrom, null);
+  assert.equal((await s.load()).migratedFrom, 2);
+  assert.equal((await s.listBackups()).length, 1);
+  assert.deepEqual(s.state.routines, []);
+  assert.equal(s.state.settings.keepAwake, true);
   const cardio = s.state.sessions[0].entries.find((e) => e.exerciseId === 'cinta');
   assert.deepEqual(cardio.blocks, v2.sessions[0].entries[1].blocks);
   assert.equal(s.state.settings.cardioTargetMin, 120);
+});
+
+test('fixture v3 (con rutinas): se abre tal cual y conserva rutinas y routineId', async () => {
+  const v3 = fixture('v3.json');
+  const adapter = memoryAdapter();
+  await adapter.put('doc', v3);
+  const s = createStore(adapter);
+  assert.equal((await s.load()).migratedFrom, null);
+  assert.deepEqual(s.state.routines.map((r) => r.name), ['Día A', 'Día B']);
+  assert.equal(s.state.sessions[0].routineId, 'routine-a');
+  assert.equal(s.state.settings.keepAwake, false);
+});
+
+test('importar fusionando no duplica rutinas y añade las que faltan', async () => {
+  const a = createStore(memoryAdapter());
+  await a.load();
+  await a.update((d) => { Object.assign(d, migrate(fixture('v3.json')).doc); });
+  const json = await a.exportJson();
+  const b = createStore(memoryAdapter());
+  await b.load();
+  await b.update((d) => { d.routines.push({ id: 'routine-a', name: 'Día A', exerciseIds: ['jalon-pecho'], createdAt: 1 }); });
+  await b.importJson(json, 'merge');
+  assert.equal(b.state.routines.length, 2);
+  assert.deepEqual(b.state.routines.find((r) => r.id === 'routine-a').exerciseIds, ['jalon-pecho'], 'lo local manda');
 });

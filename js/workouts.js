@@ -21,7 +21,7 @@ export const entryVolume = (entry) => workingSets(entry).reduce((a, s) => a + se
 export const sessionVolume = (session) => session.entries.reduce((a, e) => a + entryVolume(e), 0);
 export const sessionSetCount = (session) => session.entries.reduce((a, e) => a + workingSets(e).length, 0);
 
-export const newSession = (date, now) => ({ id: newId(), date, startedAt: now, endedAt: null, notes: '', entries: [] });
+export const newSession = (date, now, routineId = null) => ({ id: newId(), date, startedAt: now, endedAt: null, notes: '', entries: [], ...(routineId ? { routineId } : {}) });
 export const activeSession = (sessions) => sessions.find((s) => !s.endedAt) ?? null;
 /** Sesiones terminadas, de más reciente a más antigua. */
 export const finished = (sessions) => sessions.filter((s) => s.endedAt).sort((a, b) => b.date.localeCompare(a.date) || b.startedAt - a.startedAt);

@@ -7,7 +7,7 @@
 import { diffDays } from './dates.js';
 import { MUSCLES } from './catalog.js';
 import { est1RM, fmtKg, round1 } from './workouts.js';
-import { lastTrained, muscleSets } from './stats.js';
+import { lastTrained, muscleSets, weeklyCounts } from './stats.js';
 import { addDays } from './dates.js';
 
 export const THRESHOLDS = { stagnantSessions: 3, breakDays: 21, neglectedDays: 10, deloadFactor: 0.9 };
@@ -157,6 +157,54 @@ export function suggestWorkout(sessions, exercises, exMap, today, maxMuscles = 3
     .map(([muscle, date]) => ({ muscle, days: date ? diffDays(date, today) : 999 }))
     .sort((a, b) => b.days - a.days);
   return rows.slice(0, maxMuscles).map((r) => ({ ...r, exercises: suggestExercises(exercises, r.muscle, used, 2) }));
+}
+
+/**
+ * Series de aproximación antes de la primera serie pesada: 50 % × 8 y 70 % × 5 redondeadas al salto del ejercicio.
+ * Solo con peso de trabajo ≥ 20 kg y salto > 0 (con menos peso no hace falta). Devuelve series con `warmup: true`.
+ */
+export function warmupSets(kg, step) {
+  if (!(kg >= 20) || !(step > 0)) return [];
+  const at = (f) => Math.max(step, round1(Math.round((kg * f) / step) * step));
+  const out = [];
+  const a = at(0.5);
+  const b = at(0.7);
+  if (a < kg) out.push({ kg: a, reps: 8, warmup: true });
+  if (b < kg && b > a) out.push({ kg: b, reps: 5, warmup: true });
+  return out;
+}
+
+/**
+ * Semana de descarga: tras ≥ 6 semanas completas seguidas con carga normal (volumen ≥ 60 % de la mediana de las últimas 12),
+ * y con ≥ 8 semanas de historia. Una semana ligera o un parón reinicia la cuenta.
+ */
+export function deloadRecommendation(sessions, today) {
+  const done = sessions.filter((s) => s.endedAt);
+  if (done.length < 8) return null;
+  const first = done.reduce((m, s) => (s.date < m ? s.date : m), done[0].date);
+  if (diffDays(first, today) < 56) return null;
+  const prior = weeklyCounts(done, today, 12).slice(0, -1); // semanas completas (la actual aún no cuenta)
+  const vols = prior.map((w) => w.volume).filter((v) => v > 0).sort((a, b) => a - b);
+  if (vols.length < 4) return null;
+  const median = vols[Math.floor(vols.length / 2)];
+  let streak = 0;
+  for (let i = prior.length - 1; i >= 0 && prior[i].volume >= median * 0.6; i--) streak++;
+  if (streak < 6) return null;
+  return {
+    kind: 'deload', priority: 2, title: 'Semana de descarga',
+    detail: `Llevas ${streak} semanas seguidas con carga normal. Esta semana o la próxima haz los mismos ejercicios con ~60 % del peso y sin llegar al límite; después vuelve a progresar.`,
+    why: `${streak} semanas completas seguidas con volumen ≥ 60 % de tu mediana (≥ 6).`,
+  };
+}
+
+/** Sustitutos de un ejercicio (mismo músculo y mismo tipo fuerza/cardio): primero los ya usados, luego mismo equipo, luego máquinas. */
+export function alternativesFor(exercise, list, used = new Map(), count = 8) {
+  const cardio = exercise.kind === 'cardio';
+  const rank = (e) => (used.get(e.id) ? 0 : e.equipment === exercise.equipment ? 1 : e.equipment === 'machine' ? 2 : 3);
+  return list
+    .filter((e) => !e.hidden && e.id !== exercise.id && e.primary === exercise.primary && (e.kind === 'cardio') === cardio)
+    .sort((a, b) => rank(a) - rank(b) || (used.get(b.id) ?? 0) - (used.get(a.id) ?? 0) || a.name.localeCompare(b.name, 'es'))
+    .slice(0, count);
 }
 
 export { est1RM };
